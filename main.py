@@ -44,21 +44,32 @@ def upsert_vector(item: dict):
     db = SessionLocal()
     try:
         external_id = item["external_id"]
-        vector = np.array(item["vector"], dtype=np.float32).tolist()
+        # normalize vector for cosine space
+        vec = np.array(item["vector"], dtype=np.float32)
+        vec /= np.linalg.norm(vec) + 1e-10
         metadata = item.get("metadata")
 
         row = db.query(Vector).filter_by(external_id=external_id).first()
         if row:
-            row.vector = vector
-            row.metadata = metadata
+            row.vector = vec.tolist()
+            row.meta = metadata or row.meta
             status = "updated"
+            idx = row.internal_id
+            try:
+                indexer.mark_deleted(idx)
+            except Exception:
+                pass
+            indexer.add_item(vec, idx)
         else:
-            row = Vector(external_id=external_id, vector=vector, metadata=metadata)
+            row = Vector(external_id=external_id, vector=vec.tolist(), meta=metadata or {})
             db.add(row)
+            db.commit()
+            db.refresh(row)
+            idx = row.internal_id
+            indexer.add_item(vec, idx)
             status = "inserted"
 
         db.commit()
-        db.refresh(row)
         return {
             "external_id": row.external_id,
             "internal_id": row.internal_id,
@@ -75,16 +86,16 @@ def upsert_vector(item: dict):
 def bulk_upsert(req: BulkUpsertRequest):
     db = SessionLocal()
     try:
-        to_add_vectors = []
-        to_add_ids = []
         results = []
         for it in req.items:
             if len(it.vector) != DIM:
                 raise HTTPException(status_code=400, detail=f"vector dim must be {DIM}")
+            vec = np.array(it.vector, dtype=np.float32)
+            vec /= np.linalg.norm(vec) + 1e-10
+
             existing = db.query(Vector).filter_by(external_id=it.external_id).first()
-            vbytes = np.array(it.vector, dtype=np.float32).tolist()
             if existing:
-                existing.vector = vbytes
+                existing.vector = vec.tolist()
                 existing.meta = it.metadata or existing.meta
                 db.commit()
                 idx = existing.internal_id
@@ -92,16 +103,24 @@ def bulk_upsert(req: BulkUpsertRequest):
                     indexer.mark_deleted(idx)
                 except Exception:
                     pass
-                indexer.add_item(np.array(it.vector), idx)
-                results.append({"external_id": it.external_id, "internal_id": idx, "status": "updated"})
+                indexer.add_item(vec, idx)
+                results.append({
+                    "external_id": it.external_id,
+                    "internal_id": idx,
+                    "status": "updated"
+                })
             else:
-                new = Vector(external_id=it.external_id, metadata=it.metadata or {}, vector=vbytes)
+                new = Vector(external_id=it.external_id, meta=it.metadata or {}, vector=vec.tolist())
                 db.add(new)
                 db.commit()
                 db.refresh(new)
                 idx = new.internal_id
-                indexer.add_item(np.array(it.vector), idx)
-                results.append({"external_id": it.external_id, "internal_id": idx, "status": "inserted"})
+                indexer.add_item(vec, idx)
+                results.append({
+                    "external_id": it.external_id,
+                    "internal_id": idx,
+                    "status": "inserted"
+                })
         return {"results": results}
     finally:
         db.close()
@@ -143,11 +162,23 @@ def search(req: SearchRequest):
             cur = indexer.get_current_count()
             k = min(req.k, max(1, cur))
             labels, distances = indexer.knn_query(q, k=k)
+
+            # convert to numpy arrays for safe handling
+            labels = np.array(labels)
+            distances = np.array(distances)
+
+            # ensure 2D
+            if labels.ndim == 1:
+                labels = labels.reshape(1, -1)
+                distances = distances.reshape(1, -1)
+
             out = []
-            for lbl, dist in zip(labels, distances):
-                row = db.query(Vector).filter_by(internal_id=int(lbl)).first()
-                if row:
-                    out.append({"external_id": row.external_id, "score": float(dist), "metadata": row.meta})
+            for lbl_row, dist_row in zip(labels, distances):
+                for lbl, dist in zip(lbl_row, dist_row):
+                    db_row = db.query(Vector).filter_by(internal_id=int(lbl)).first()
+                    if db_row:
+                        score = 1 - float(dist)  # since index is using cosine
+                        out.append({"external_id": db_row.external_id, "score": score, "metadata": db_row.meta})
             return {"results": out}
     finally:
         db.close()
