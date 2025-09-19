@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+numpy
+hnswlib
+sqlalchemy
+pydantic
+requests
+sentence-transformers
