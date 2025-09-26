@@ -1,0 +1,9 @@
+version: "3.9"
+services:
+  vectordb:
+    build: .
+    container_name: vectordb_app
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data  # persist index + db
