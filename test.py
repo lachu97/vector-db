@@ -3,6 +3,8 @@ import numpy as np
 import json
 
 BASE = "http://127.0.0.1:8000"
+API_KEY = "test-key"  # replace with the key you set
+HEADERS = {"X-API-Key": API_KEY}
 
 def pretty(label, resp):
     print(f"\n--- {label} ---")
@@ -12,19 +14,23 @@ def pretty(label, resp):
         print("Non-JSON response:")
         print(resp.text)
 
-# 1. Health check
-pretty("Health (before)", requests.get(f"{BASE}/health"))
 
-# 2. Upsert one vector
+# --------------------------
+# Core API Tests
+# --------------------------
+
+pretty("Health (before)", requests.get(f"{BASE}/v1/health", headers=HEADERS))
+
+# Upsert one vector
 vec = np.random.rand(384).tolist()
-resp = requests.post(f"{BASE}/upsert", json={
+resp = requests.post(f"{BASE}/v1/upsert", json={
     "external_id": "doc1",
     "vector": vec,
     "metadata": {"type": "article", "lang": "en"}
-})
+}, headers=HEADERS)
 pretty("Upsert doc1", resp)
 
-# 3. Bulk upsert
+# Bulk upsert
 bulk = {
     "items": [
         {
@@ -39,14 +45,44 @@ bulk = {
         }
     ]
 }
-pretty("Bulk Upsert", requests.post(f"{BASE}/bulk_upsert", json=bulk))
+pretty("Bulk Upsert", requests.post(f"{BASE}/v1/bulk_upsert", json=bulk, headers=HEADERS))
 
-# 4. Search
+# Search
 query = np.random.rand(384).tolist()
-pretty("Search", requests.post(f"{BASE}/search", json={"vector": query, "k": 2}))
+pretty("Search", requests.post(f"{BASE}/v1/search", json={"vector": query, "k": 2}, headers=HEADERS))
 
-# 5. Delete
-pretty("Delete doc1", requests.delete(f"{BASE}/delete/doc1"))
+# Delete
+pretty("Delete doc1", requests.delete(f"{BASE}/v1/delete/doc1", headers=HEADERS))
 
-# 6. Health check after delete
-pretty("Health (after delete)", requests.get(f"{BASE}/health"))
+# Health check after delete
+pretty("Health (after delete)", requests.get(f"{BASE}/v1/health", headers=HEADERS))
+
+
+# --------------------------
+# Productization Layer Tests
+# --------------------------
+
+pretty("Recommend for doc2", requests.post(
+    f"{BASE}/v1/recommend/doc2?k=2",
+    headers=HEADERS
+))
+
+# Similarity test (doc2 vs doc3)
+pretty("Similarity doc2 vs doc3", requests.post(
+    f"{BASE}/v1/similarity?id1=doc2&id2=doc3",
+    headers=HEADERS
+))
+
+# Rerank test
+query = np.random.rand(384).tolist()
+pretty("Rerank", requests.post(f"{BASE}/v1/rerank", json={
+    "vector": query,
+    "candidates": ["doc2", "doc3"]
+}, headers=HEADERS))
+
+# Hybrid search test
+pretty("Hybrid Search", requests.post(f"{BASE}/v1/hybrid_search", json={
+    "query_text": "latest tech news",
+    "vector": np.random.rand(384).tolist(),
+    "k": 2
+}, headers=HEADERS))

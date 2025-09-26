@@ -6,3 +6,5 @@ sqlalchemy
 pydantic
 requests
 sentence-transformers
+gunicorn
+psycopg2-binary

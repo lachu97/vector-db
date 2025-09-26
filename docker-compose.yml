@@ -1,9 +1,27 @@
 version: "3.9"
+
 services:
   vectordb:
     build: .
     container_name: vectordb_app
     ports:
       - "8000:8000"
+    environment:
+      API_KEY: ${API_KEY}
+      WORKERS: ${WORKERS:-4}
+      PORT: ${PORT:-8000}
     volumes:
       - ./data:/app/data  # persist index + db
+    restart: unless-stopped  # auto-restart on failures
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "-H", "x-api-key: ${API_KEY}", "http://localhost:${PORT}/v1/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
