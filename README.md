@@ -17,6 +17,8 @@ This is a **minimal product** for experimentation, prototyping, and small-scale 
 - REST API powered by **FastAPI**
 - SQLite backend for persistence
 - Dockerized for easy deployment
+- Dockerized with Gunicorn + Uvicorn for production
+- Healthcheck endpoint for container orchestration
 
 ---
 
@@ -65,8 +67,8 @@ docker build -t vector-db-mvp
 docker run -d \
   -p 8000:8000 \
   -v $(pwd)/data:/app/data \
-  -v $(pwd)/vectors.db:/app/vectors.db \
-  --name vector-db \
+  -e API_KEY=test-key \
+  --name vectordb_app \
   vector-db-mvp
 
 ```
@@ -76,41 +78,64 @@ docker run -d \
 ```bash 
 docker logs -f vector-db
 ```
+
+### Docker Compose 
+```bash 
+docker compose up -d
+```
 ### 📡 API Endpoints
 
-| Method   | Endpoint       | Description                                              |
-| -------- | -------------- | -------------------------------------------------------- |
-| `POST`   | `/upsert`      | Insert or update a single vector                         |
-| `POST`   | `/bulk_upsert` | Insert or update multiple vectors                        |
-| `POST`   | `/search`      | Search nearest neighbors (with optional metadata filter) |
-| `DELETE` | `/delete/{id}` | Delete vector by external_id                             |
-| `GET`    | `/health`      | Health check + count of indexed items                    |
-| `GET`    | `/`            | Welcome message                                          |
+| Method   | Endpoint          | Description                                              |
+| -------- | ----------------- | -------------------------------------------------------- |
+| `POST`   | `/v1/upsert`      | Insert or update a single vector                         |
+| `POST`   | `/v1/bulk_upsert` | Insert or update multiple vectors                        |
+| `POST`   | `/v1/search`      | Search nearest neighbors (with optional metadata filter) |
+| `POST`   | `/v1/similarity`  | Cosine similarity between two vectors                    |
+| `POST`   | `/v1/recommend`   | Recommend similar vectors (skip self)                    |
+| `DELETE` | `/v1/delete/{id}` | Delete vector by external_id                             |
+| `GET`    | `/v1/health`      | Health check + count of indexed items                    |
+| `GET`    | `/`               | Welcome message + docs link                              |
+
 
 
 ### Example: Upsert
 
 ```bash 
-POST /upsert
+POST /v1/upsert
 {
   "external_id": "doc1",
   "vector": [0.12, 0.98, ...], 
   "metadata": { "category": "news" }
 }
 
+
 ```
 
 ### Example: Search
 
 ```bash 
-POST /search
+POST /v1/search
 {
   "vector": [0.11, 0.95, ...],
   "k": 3,
   "filters": { "category": "news" }
 }
 
+
 ```
+
+### Health Check 
+```bash
+curl -H "x-api-key: test-key" http://localhost:8000/v1/health
+```
+
+### 🔒 API Key
+
+```bash 
+x-api-key: <API_KEY>
+```
+- Configurable via environment variable API_KEY
+- Default (development) is test-key
 ### 🚀 Roadmap
 1.Authentication & API keys
 2.Pagination for search results
