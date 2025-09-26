@@ -137,11 +137,15 @@ x-api-key: <API_KEY>
 - Configurable via environment variable API_KEY
 - Default (development) is test-key
 ### 🚀 Roadmap
-1.Authentication & API keys
-2.Pagination for search results
-3.Support for other distance metrics
-4.Better filter engine
-5.Cloud deployment templates (AWS/GCP/Azure)
+- 1.Authentication & API keys
+- 2.Pagination for search results
+- 3.Support for other distance metrics
+- 4.Better filter engine
+- 5.Cloud deployment templates (AWS/GCP/Azure)
+
+### ❤️ EnterPrise API
+
+For Enterprise APIs and support, write a mail to stellarworks03@gmail.com
 
 ### ❤️ Contributing
 
