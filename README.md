@@ -1,4 +1,4 @@
-# 🚀 Vector DB MVP
+# 🚀 Vector DB For AI Applications(a MVP Product)
 
 A lightweight **vector database service** built with **FastAPI**, **SQLite**, and **HNSWlib**.  
 It provides endpoints for storing, searching, and managing vector embeddings with optional metadata and filters.  
