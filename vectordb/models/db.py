@@ -64,6 +64,8 @@ class ApiKey(Base):
     role = Column(String, nullable=False)  # "admin", "readwrite", "readonly"
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime, nullable=True)       # None = never expires
+    last_used_at = Column(DateTime, nullable=True)     # updated on every authenticated request
 
 
 def init_db():

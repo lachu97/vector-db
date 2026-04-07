@@ -1,5 +1,6 @@
 # vectordb/auth.py
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Depends, HTTPException
@@ -33,6 +34,19 @@ def _lookup_key(api_key: Optional[str], db: Session) -> ApiKeyInfo:
     # Check DB for managed keys
     key_row = db.query(ApiKey).filter_by(key=api_key, is_active=True).first()
     if key_row:
+        # Check expiry
+        if key_row.expires_at is not None:
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            if key_row.expires_at < now:
+                raise HTTPException(status_code=401, detail="API key has expired")
+
+        # Update last_used_at (best-effort, don't fail the request if this errors)
+        try:
+            key_row.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            db.commit()
+        except Exception:
+            db.rollback()
+
         return ApiKeyInfo(key=key_row.key, name=key_row.name, role=key_row.role)
 
     # Fallback: bootstrap admin key from environment
