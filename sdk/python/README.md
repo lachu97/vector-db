@@ -5,7 +5,7 @@ Python SDK for the [VectorDB](https://github.com/lachu97/vector-db) REST API —
 ## Installation
 
 ```bash
-pip install vectordb-client
+pip install vectordb-sdk
 ```
 
 ## Quick Start
