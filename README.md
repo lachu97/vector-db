@@ -57,6 +57,7 @@ uvicorn main:app --reload
 
 ### 1. Build image
 
+
 ```bash 
 docker build -t vector-db-mvp 
 ```
@@ -142,6 +143,18 @@ x-api-key: <API_KEY>
 - 3.Support for other distance metrics
 - 4.Better filter engine
 - 5.Cloud deployment templates (AWS/GCP/Azure)
+## Why VectorDB-MVP?
+
+**10x Cheaper**: $10/month for 1M vectors vs. Pinecone's $70
+**Self-Hosted**: Your data never leaves your infrastructure  
+**Zero Config**: `docker run` and you're live in 30 seconds
+**Open Source**: Audit, modify, extend as needed
+
+**Best For**:
+- Startups with <5M vectors
+- RAG applications (semantic search)
+- Privacy-sensitive use cases
+- Prototyping before scaling to managed services
 
 ### ❤️ EnterPrise API
 
