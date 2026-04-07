@@ -8,10 +8,10 @@ const config = {
   favicon: "img/favicon.ico",
 
   url: "https://lachu97.github.io",
-  baseUrl: "/vector-db-mvp/",
+  baseUrl: "/vector-db/",
 
   organizationName: "lachu97",
-  projectName: "vector-db-mvp",
+  projectName: "vector-db",
   deploymentBranch: "gh-pages",
   trailingSlash: false,
 
