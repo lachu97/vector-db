@@ -7,7 +7,7 @@ sidebar_label: Python SDK
 ## Installation
 
 ```bash
-pip install vectordb-sdk
+pip install vdb-python
 ```
 
 Or install from source:
