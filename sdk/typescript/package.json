@@ -11,13 +11,25 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "files": ["dist"],
   "scripts": {
     "build": "tsc",
     "test": "jest --runInBand",
-    "test:coverage": "jest --runInBand --coverage"
+    "test:coverage": "jest --runInBand --coverage",
+    "prepublishOnly": "npm run build"
   },
-  "keywords": ["vector", "database", "embeddings", "semantic-search"],
+  "keywords": ["vector", "database", "embeddings", "semantic-search", "rag", "ai"],
   "license": "MIT",
+  "author": "lachu97",
+  "homepage": "https://lachu97.github.io/vector-db/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lachu97/vector-db.git",
+    "directory": "sdk/typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/lachu97/vector-db/issues"
+  },
   "devDependencies": {
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",

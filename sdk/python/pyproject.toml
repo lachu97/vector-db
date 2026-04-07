@@ -6,12 +6,28 @@ build-backend = "setuptools.build_meta"
 name = "vectordb-client"
 version = "0.1.0"
 description = "Python SDK for the VectorDB REST API"
+readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "lachu97"}
+]
+keywords = ["vector", "database", "embeddings", "semantic-search", "rag", "ai"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
 dependencies = [
     "requests>=2.28",
     "httpx>=0.25",
     "click>=8.1",
 ]
+
+[project.urls]
+Homepage = "https://lachu97.github.io/vector-db/"
+Repository = "https://github.com/lachu97/vector-db"
+Issues = "https://github.com/lachu97/vector-db/issues"
 
 [project.scripts]
 vdb = "vectordb_client.cli.main:cli"
