@@ -1,0 +1,63 @@
+---
+title: Introduction
+description: A lightweight, self-hosted vector database for semantic search and AI applications.
+---
+
+## What is VectorDB?
+
+VectorDB is a lightweight, self-hosted vector database built for startups and small-scale AI applications. It provides a REST API for storing, searching, and managing vector embeddings with metadata — without the cost or complexity of managed cloud solutions.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Get running in under 5 minutes with Docker or Python.
+  </Card>
+  <Card title="API Reference" icon="rectangle-terminal" href="/api-reference/overview">
+    Explore the full REST API with interactive examples.
+  </Card>
+  <Card title="Python SDK" icon="python" href="/sdks/python">
+    Install the Python SDK and start querying in seconds.
+  </Card>
+  <Card title="TypeScript SDK" icon="js" href="/sdks/typescript">
+    Use VectorDB from Node.js or any JavaScript environment.
+  </Card>
+</CardGroup>
+
+## Why VectorDB?
+
+| | VectorDB | Pinecone | Weaviate |
+|---|---|---|---|
+| Self-hosted | ✅ | ❌ | ✅ |
+| Free tier | ✅ Unlimited | Limited | Limited |
+| Setup time | < 5 min | Managed | Complex |
+| Python SDK | ✅ | ✅ | ✅ |
+| TypeScript SDK | ✅ | ✅ | ✅ |
+| CLI | ✅ | ❌ | ❌ |
+| Hybrid search | ✅ | ✅ | ✅ |
+
+## Key Features
+
+- **Collections** — Namespace your vectors. Each collection has its own dimensionality and distance metric.
+- **HNSW indexing** — Approximate nearest neighbor search using HNSWlib. Fast at any scale.
+- **Multiple distance metrics** — Cosine similarity, L2 (Euclidean), and inner product.
+- **Metadata filtering** — Attach JSON metadata to every vector and filter search results.
+- **Hybrid search** — Combine vector similarity with keyword search using Reciprocal Rank Fusion (RRF).
+- **Recommendations** — Find vectors similar to any stored vector.
+- **Reranking** — Re-score a candidate set against a query vector.
+- **Multi-key auth** — Role-based API keys (admin, readwrite, readonly).
+- **Redis caching** — Optional caching layer for high-throughput search workloads.
+- **PostgreSQL backend** — Swap SQLite for PostgreSQL + pgvector for production scale.
+- **OpenTelemetry** — Distributed tracing, Prometheus metrics, structured logging.
+
+## Architecture
+
+VectorDB is a single FastAPI service backed by SQLite (default) or PostgreSQL. Vector indexes are maintained in-memory using HNSWlib and persisted to disk on shutdown.
+
+```
+Client → REST API (FastAPI)
+              ↓
+         Auth & Rate Limiting
+              ↓
+         Vector Backend (SQLite+HNSW or PostgreSQL+pgvector)
+              ↓
+         Optional: Redis Cache
+```

@@ -1,0 +1,48 @@
+---
+title: Delete Vector
+api: DELETE /v1/collections/{collection_name}/delete/{external_id}
+description: Delete a single vector by its external ID.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection name.
+</ParamField>
+
+<ParamField path="external_id" type="string" required>
+  The external ID of the vector to delete.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X DELETE http://localhost:8000/v1/collections/articles/delete/doc-1 \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "status": "deleted",
+    "external_id": "doc-1"
+  },
+  "error": null
+}
+```
+
+```json Not Found (404)
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 404,
+    "message": "Vector 'doc-1' not found"
+  }
+}
+```
+</ResponseExample>

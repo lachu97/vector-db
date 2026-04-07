@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest
+httpx
+pytest-cov
+sentence-transformers
+psycopg2-binary

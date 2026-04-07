@@ -2,9 +2,24 @@ fastapi
 uvicorn[standard]
 numpy
 hnswlib
-sqlalchemy
+sqlalchemy[asyncio]
 pydantic
-requests
-sentence-transformers
+pydantic-settings
 gunicorn
-psycopg2-binary
+alembic
+requests
+# Phase 3: Security & Auth
+# (no new packages — uses stdlib secrets + FastAPI built-ins)
+# Phase 4: Observability
+structlog
+prometheus_client
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-sqlalchemy
+opentelemetry-exporter-otlp-proto-http
+# Phase 5: Scale & Storage Backends
+aiosqlite
+asyncpg
+pgvector
+redis[hiredis]

@@ -1,0 +1,40 @@
+---
+title: Similarity
+api: POST /v1/collections/{collection_name}/similarity
+description: Compute cosine similarity between two stored vectors.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection name.
+</ParamField>
+
+<ParamField query="id1" type="string" required>
+  External ID of the first vector.
+</ParamField>
+
+<ParamField query="id2" type="string" required>
+  External ID of the second vector.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST "http://localhost:8000/v1/collections/articles/similarity?id1=doc-1&id2=doc-2" \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "score": 0.9234
+  },
+  "error": null
+}
+```
+</ResponseExample>

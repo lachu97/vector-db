@@ -1,0 +1,41 @@
+---
+title: List Collections
+api: GET /v1/collections
+description: Return all collections with their dimensions, metrics, and vector counts.
+---
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl http://localhost:8000/v1/collections \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "collections": [
+      {
+        "name": "article-embeddings",
+        "dim": 384,
+        "distance_metric": "cosine",
+        "vector_count": 10482
+      },
+      {
+        "name": "product-images",
+        "dim": 512,
+        "distance_metric": "l2",
+        "vector_count": 55291
+      }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

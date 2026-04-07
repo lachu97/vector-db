@@ -1,0 +1,77 @@
+---
+title: Upsert Vector
+api: POST /v1/collections/{collection_name}/upsert
+description: Insert or update a single vector. If the external_id already exists, it is updated.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Target collection name.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<ParamField body="external_id" type="string" required>
+  Unique identifier for the vector within this collection. If it already exists, the vector and metadata are overwritten.
+</ParamField>
+
+<ParamField body="vector" type="number[]" required>
+  Float array. Length must exactly match the collection's `dim`.
+</ParamField>
+
+<ParamField body="metadata" type="object">
+  Optional JSON object. Attach any structured data. Max size: 10KB.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections/articles/upsert \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "external_id": "doc-1",
+    "vector": [0.1, 0.2, 0.3],
+    "metadata": {
+      "title": "Getting started",
+      "author": "Alice",
+      "tags": ["tutorial"]
+    }
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Inserted
+{
+  "status": "success",
+  "data": {
+    "external_id": "doc-1",
+    "status": "inserted"
+  },
+  "error": null
+}
+```
+
+```json Updated
+{
+  "status": "success",
+  "data": {
+    "external_id": "doc-1",
+    "status": "updated"
+  },
+  "error": null
+}
+```
+
+```json Dimension Mismatch (400)
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 400,
+    "message": "Dimension mismatch: expected 384, got 3"
+  }
+}
+```
+</ResponseExample>

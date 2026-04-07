@@ -1,0 +1,51 @@
+---
+title: Rerank
+api: POST /v1/collections/{collection_name}/rerank
+description: Re-score a list of candidate vectors against a query vector and return them sorted by relevance.
+---
+
+Rerank is useful as a second-pass step: first retrieve a broad candidate set with search, then rerank to refine the ordering.
+
+<ParamField path="collection_name" type="string" required>
+  Collection name.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<ParamField body="vector" type="number[]" required>
+  Query vector to score candidates against.
+</ParamField>
+
+<ParamField body="candidates" type="string[]" required>
+  List of external IDs to re-score.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections/articles/rerank \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3],
+    "candidates": ["doc-1", "doc-2", "doc-3", "doc-4", "doc-5"]
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "results": [
+      { "external_id": "doc-3", "score": 0.9812, "metadata": {} },
+      { "external_id": "doc-1", "score": 0.9541, "metadata": {} },
+      { "external_id": "doc-5", "score": 0.9201, "metadata": {} }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

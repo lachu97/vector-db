@@ -1,0 +1,100 @@
+---
+title: API Keys
+description: Create, list, and revoke API keys. Requires admin role.
+---
+
+## List Keys
+
+<api>GET /v1/admin/keys</api>
+
+<RequestExample>
+```bash cURL
+curl http://localhost:8000/v1/admin/keys \
+  -H "x-api-key: your-admin-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "keys": [
+      { "id": 1, "name": "default", "role": "admin", "created_at": "2024-01-01T00:00:00Z" },
+      { "id": 2, "name": "production-app", "role": "readwrite", "created_at": "2024-01-15T10:00:00Z" }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>
+
+---
+
+## Create Key
+
+<api>POST /v1/admin/keys</api>
+
+<ParamField body="name" type="string" required>
+  Descriptive name for the key.
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  One of `admin`, `readwrite`, or `readonly`.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/admin/keys \
+  -H "x-api-key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "production-app", "role": "readwrite"}'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "id": 2,
+    "name": "production-app",
+    "key": "sk-rw-abc123xyz...",
+    "role": "readwrite",
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  "error": null
+}
+```
+</ResponseExample>
+
+<Warning>
+  The `key` value is only shown once. Copy it immediately.
+</Warning>
+
+---
+
+## Delete Key
+
+<api>DELETE /v1/admin/keys/{key_id}</api>
+
+<ParamField path="key_id" type="integer" required>
+  The numeric ID of the key to revoke.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X DELETE http://localhost:8000/v1/admin/keys/2 \
+  -H "x-api-key: your-admin-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": { "status": "deleted", "id": 2 },
+  "error": null
+}
+```
+</ResponseExample>

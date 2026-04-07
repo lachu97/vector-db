@@ -1,0 +1,35 @@
+---
+title: Health
+api: GET /v1/health
+description: Server health, uptime, and per-collection statistics.
+---
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl http://localhost:8000/v1/health \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "status": "ok",
+    "uptime_seconds": 3842.5,
+    "total_vectors": 65773,
+    "total_collections": 3,
+    "collections": [
+      { "name": "article-embeddings", "dim": 384, "vector_count": 10482 },
+      { "name": "product-images", "dim": 512, "vector_count": 55291 }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

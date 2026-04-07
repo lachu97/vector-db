@@ -1,0 +1,47 @@
+---
+title: Get Collection
+api: GET /v1/collections/{name}
+description: Get details for a single collection.
+---
+
+<ParamField path="name" type="string" required>
+  Collection name.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl http://localhost:8000/v1/collections/article-embeddings \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "name": "article-embeddings",
+    "dim": 384,
+    "distance_metric": "cosine",
+    "vector_count": 10482,
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  "error": null
+}
+```
+
+```json Not Found (404)
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 404,
+    "message": "Collection 'article-embeddings' not found"
+  }
+}
+```
+</ResponseExample>

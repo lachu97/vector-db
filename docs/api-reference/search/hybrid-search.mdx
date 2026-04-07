@@ -1,0 +1,74 @@
+---
+title: Hybrid Search
+api: POST /v1/collections/{collection_name}/hybrid_search
+description: Combine vector similarity and keyword matching using Reciprocal Rank Fusion.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection to search.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<ParamField body="query_text" type="string" required>
+  Text query for keyword matching.
+</ParamField>
+
+<ParamField body="vector" type="number[]" required>
+  Query vector for semantic similarity. Typically the embedding of `query_text`.
+</ParamField>
+
+<ParamField body="k" type="integer" default="10">
+  Number of results to return.
+</ParamField>
+
+<ParamField body="offset" type="integer" default="0">
+  Pagination offset.
+</ParamField>
+
+<ParamField body="alpha" type="float" default="0.5">
+  Blend factor. `1.0` = pure vector search, `0.0` = pure keyword search, `0.5` = equal weight.
+</ParamField>
+
+<ParamField body="filters" type="object">
+  Optional metadata filter.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections/articles/hybrid_search \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query_text": "machine learning transformers",
+    "vector": [0.1, 0.2, 0.3],
+    "k": 10,
+    "alpha": 0.7
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "results": [
+      {
+        "external_id": "doc-88",
+        "score": 0.9731,
+        "metadata": {"title": "Transformers explained"}
+      },
+      {
+        "external_id": "doc-12",
+        "score": 0.9412,
+        "metadata": {"title": "Intro to machine learning"}
+      }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

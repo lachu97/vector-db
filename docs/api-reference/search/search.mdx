@@ -1,0 +1,66 @@
+---
+title: Search
+api: POST /v1/collections/{collection_name}/search
+description: Find the k most similar vectors to a query vector.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection to search.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<ParamField body="vector" type="number[]" required>
+  Query vector. Must match the collection's dimension.
+</ParamField>
+
+<ParamField body="k" type="integer" default="10">
+  Number of results to return.
+</ParamField>
+
+<ParamField body="offset" type="integer" default="0">
+  Pagination offset. Skip the first `offset` results.
+</ParamField>
+
+<ParamField body="filters" type="object">
+  Metadata filter. Only return vectors whose metadata contains the specified key-value pairs.
+  Example: `{"author": "Alice", "tag": "ml"}`
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections/articles/search \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "vector": [0.1, 0.2, 0.3],
+    "k": 5,
+    "filters": {"author": "Alice"}
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "results": [
+      {
+        "external_id": "doc-42",
+        "score": 0.9823,
+        "metadata": {"title": "Getting started", "author": "Alice"}
+      },
+      {
+        "external_id": "doc-17",
+        "score": 0.9541,
+        "metadata": {"title": "Advanced topics", "author": "Alice"}
+      }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

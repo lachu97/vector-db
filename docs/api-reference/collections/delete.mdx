@@ -1,0 +1,37 @@
+---
+title: Delete Collection
+api: DELETE /v1/collections/{name}
+description: Delete a collection and all its vectors permanently.
+---
+
+<ParamField path="name" type="string" required>
+  Collection name.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<Warning>
+  This operation is irreversible. All vectors and metadata in the collection are permanently deleted.
+</Warning>
+
+<RequestExample>
+```bash cURL
+curl -X DELETE http://localhost:8000/v1/collections/article-embeddings \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "status": "deleted",
+    "name": "article-embeddings"
+  },
+  "error": null
+}
+```
+</ResponseExample>

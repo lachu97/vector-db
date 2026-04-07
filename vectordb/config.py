@@ -1,0 +1,47 @@
+# vectordb/config.py
+from typing import List
+from pydantic_settings import BaseSettings
+
+
+class Settings(BaseSettings):
+    api_key: str = "test-key"
+    vector_dim: int = 384
+    index_path: str = "data/index.bin"
+    max_elements: int = 10_000
+    ef_construction: int = 200
+    m: int = 16
+    ef_query: int = 50
+    db_url: str = "sqlite:///./vectors.db"
+    port: int = 8000
+    workers: int = 4
+
+    # CORS
+    cors_origins: List[str] = ["*"]
+
+    # Rate limiting (requests per minute per API key)
+    rate_limit_per_minute: int = 100
+
+    # Request validation hardening
+    max_vector_dim: int = 10_000
+    max_metadata_size: int = 50    # max keys in a metadata dict
+    max_batch_size: int = 1_000   # max items in bulk_upsert / batch_delete
+
+    # Logging
+    log_format: str = "json"      # "json" or "console"
+    log_level: str = "INFO"
+
+    # OpenTelemetry tracing
+    otel_enabled: bool = False
+    otel_service_name: str = "vector-db"
+    otel_endpoint: str = ""       # e.g. "http://localhost:4318" for OTLP HTTP
+
+    # Storage backend — Phase 5
+    storage_backend: str = "sqlite"   # "sqlite" or "postgres"
+    redis_url: str = ""               # e.g. "redis://localhost:6379/0"
+    cache_ttl: int = 60              # search cache TTL in seconds
+
+    model_config = {"env_file": ".env", "extra": "ignore"}
+
+
+def get_settings() -> Settings:
+    return Settings()

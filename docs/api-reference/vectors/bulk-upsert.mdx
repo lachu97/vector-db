@@ -1,0 +1,59 @@
+---
+title: Bulk Upsert
+api: POST /v1/collections/{collection_name}/bulk_upsert
+description: Insert or update multiple vectors in a single request.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Target collection name.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<ParamField body="items" type="object[]" required>
+  Array of vector objects. Max size: 1000 items (configurable via `MAX_BATCH_SIZE`).
+
+  Each item:
+  - `external_id` (string, required) — unique ID within the collection
+  - `vector` (number[], required) — must match collection dimension
+  - `metadata` (object, optional) — JSON metadata
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections/articles/bulk_upsert \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {
+        "external_id": "doc-1",
+        "vector": [0.1, 0.2, 0.3],
+        "metadata": {"title": "First article"}
+      },
+      {
+        "external_id": "doc-2",
+        "vector": [0.4, 0.5, 0.6],
+        "metadata": {"title": "Second article"}
+      }
+    ]
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "results": [
+      { "external_id": "doc-1", "status": "inserted" },
+      { "external_id": "doc-2", "status": "inserted" }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

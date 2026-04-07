@@ -1,0 +1,40 @@
+---
+title: Batch Delete
+api: POST /v1/collections/{collection_name}/delete_batch
+description: Delete multiple vectors in a single request.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection name.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<ParamField body="external_ids" type="string[]" required>
+  List of external IDs to delete. Max: 1000 items.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections/articles/delete_batch \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"external_ids": ["doc-1", "doc-2", "doc-3"]}'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "deleted": ["doc-1", "doc-2"],
+    "not_found": ["doc-3"],
+    "deleted_count": 2
+  },
+  "error": null
+}
+```
+</ResponseExample>

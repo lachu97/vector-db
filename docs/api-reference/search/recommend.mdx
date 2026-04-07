@@ -1,0 +1,43 @@
+---
+title: Recommend
+api: POST /v1/collections/{collection_name}/recommend/{external_id}
+description: Find vectors similar to a stored vector. The source vector is excluded from results.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection to search.
+</ParamField>
+
+<ParamField path="external_id" type="string" required>
+  The external ID of the source vector. Results are similar to this vector.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<ParamField query="k" type="integer" default="5">
+  Number of recommendations to return.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST "http://localhost:8000/v1/collections/articles/recommend/doc-1?k=5" \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "results": [
+      { "external_id": "doc-14", "score": 0.9712, "metadata": {"title": "Related article"} },
+      { "external_id": "doc-37", "score": 0.9544, "metadata": {"title": "Another related"} }
+    ]
+  },
+  "error": null
+}
+```
+</ResponseExample>

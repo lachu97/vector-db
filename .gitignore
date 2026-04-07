@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.env
+*.db
+data/
+.pytest_cache/
+.idea/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+node_modules/
+sdk/typescript/dist/
+memory/

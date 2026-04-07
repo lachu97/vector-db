@@ -7,14 +7,18 @@ services:
     ports:
       - "8000:8000"
     environment:
-      API_KEY: ${API_KEY}
+      API_KEY: ${API_KEY:-test-key}
       WORKERS: ${WORKERS:-4}
       PORT: ${PORT:-8000}
+      DB_URL: ${DB_URL:-sqlite:///./vectors.db}
+      VECTOR_DIM: ${VECTOR_DIM:-384}
+      INDEX_PATH: ${INDEX_PATH:-data/index.bin}
+      MAX_ELEMENTS: ${MAX_ELEMENTS:-10000}
     volumes:
-      - ./data:/app/data  # persist index + db
-    restart: unless-stopped  # auto-restart on failures
+      - ./data:/app/data
+    restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "-H", "x-api-key: ${API_KEY}", "http://localhost:${PORT}/v1/health" ]
+      test: [ "CMD", "curl", "-f", "-H", "x-api-key: ${API_KEY:-test-key}", "http://localhost:${PORT:-8000}/v1/health" ]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -24,4 +28,3 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-

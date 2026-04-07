@@ -1,0 +1,90 @@
+---
+title: API Overview
+description: The VectorDB REST API — authentication, response format, and error codes.
+---
+
+## Base URL
+
+```
+http://your-server:8000
+```
+
+The interactive API explorer (Swagger UI) is available at `/docs` when the server is running.
+
+## Authentication
+
+All endpoints (except `GET /` and `GET /metrics`) require an API key in the `x-api-key` header:
+
+```bash
+curl http://localhost:8000/v1/collections \
+  -H "x-api-key: your-api-key"
+```
+
+## API Key Roles
+
+| Role | Permissions |
+|------|-------------|
+| `admin` | All operations including key management |
+| `readwrite` | Read and write vectors and collections |
+| `readonly` | Read-only: search, list, get |
+
+Create additional API keys via the `/v1/admin/keys` endpoint (requires admin key).
+
+## Response Format
+
+All responses follow a consistent envelope format:
+
+```json
+{
+  "status": "success",
+  "data": { ... },
+  "error": null
+}
+```
+
+On error:
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 404,
+    "message": "Collection 'my-col' not found"
+  }
+}
+```
+
+<Note>
+  The HTTP status code is always `200`. Check the `status` field in the response body to detect errors.
+</Note>
+
+## Error Codes
+
+| Code | Meaning |
+|------|---------|
+| `400` | Bad request — invalid parameters or dimension mismatch |
+| `401` | Unauthorized — missing or invalid API key |
+| `403` | Forbidden — API key doesn't have required role |
+| `404` | Not found — collection or vector doesn't exist |
+| `409` | Conflict — collection or resource already exists |
+| `422` | Validation error — request body failed schema validation |
+| `429` | Rate limited — too many requests for this API key |
+| `500` | Internal server error |
+
+## Rate Limiting
+
+Requests are rate-limited per API key using a sliding window. The default is 100 requests/minute per key. Configure with `RATE_LIMIT_PER_MINUTE`.
+
+When rate limited, the response contains:
+
+```json
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 429,
+    "message": "Rate limit exceeded"
+  }
+}
+```

@@ -1,0 +1,88 @@
+{
+  "name": "VectorDB",
+  "logo": {
+    "light": "/logo/light.png",
+    "dark": "/logo/dark.png"
+  },
+  "favicon": "/favicon.png",
+  "colors": {
+    "primary": "#6366f1",
+    "light": "#818cf8",
+    "dark": "#4f46e5",
+    "anchors": {
+      "from": "#6366f1",
+      "to": "#4f46e5"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/lachu97/vector-db-mvp"
+    }
+  ],
+  "topbarCtaButton": {
+    "name": "Get Started",
+    "url": "/quickstart"
+  },
+  "anchors": [
+    {
+      "name": "API Reference",
+      "icon": "rectangle-terminal",
+      "url": "api-reference"
+    },
+    {
+      "name": "GitHub",
+      "icon": "github",
+      "url": "https://github.com/lachu97/vector-db-mvp"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": ["introduction", "quickstart"]
+    },
+    {
+      "group": "Core Concepts",
+      "pages": [
+        "concepts/collections",
+        "concepts/vectors",
+        "concepts/distance-metrics",
+        "concepts/hybrid-search"
+      ]
+    },
+    {
+      "group": "SDKs & CLI",
+      "pages": ["sdks/python", "sdks/typescript", "sdks/cli"]
+    },
+    {
+      "group": "Deployment",
+      "pages": ["deployment/docker", "deployment/configuration"]
+    },
+    {
+      "group": "API Reference",
+      "pages": [
+        "api-reference/overview",
+        "api-reference/authentication",
+        "api-reference/collections/create",
+        "api-reference/collections/list",
+        "api-reference/collections/get",
+        "api-reference/collections/delete",
+        "api-reference/vectors/upsert",
+        "api-reference/vectors/bulk-upsert",
+        "api-reference/vectors/delete",
+        "api-reference/vectors/delete-batch",
+        "api-reference/search/search",
+        "api-reference/search/recommend",
+        "api-reference/search/similarity",
+        "api-reference/search/rerank",
+        "api-reference/search/hybrid-search",
+        "api-reference/admin/health",
+        "api-reference/admin/keys"
+      ]
+    }
+  ],
+  "openapi": "/api-reference/openapi.json",
+  "footerSocials": {
+    "github": "https://github.com/lachu97/vector-db-mvp"
+  }
+}

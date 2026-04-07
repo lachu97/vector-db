@@ -1,0 +1,61 @@
+---
+title: Create Collection
+api: POST /v1/collections
+description: Create a new collection with a fixed dimension and distance metric.
+---
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Unique name for the collection. Must be unique across all collections.
+</ParamField>
+
+<ParamField body="dim" type="integer" required>
+  Vector dimensionality. Must be between 1 and `MAX_VECTOR_DIM` (default: 65536). Cannot be changed after creation.
+</ParamField>
+
+<ParamField body="distance_metric" type="string" default="cosine">
+  Distance metric for similarity calculations. One of: `cosine`, `l2`, `ip`.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X POST http://localhost:8000/v1/collections \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "article-embeddings",
+    "dim": 384,
+    "distance_metric": "cosine"
+  }'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "name": "article-embeddings",
+    "dim": 384,
+    "distance_metric": "cosine",
+    "vector_count": 0,
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  "error": null
+}
+```
+
+```json Already Exists (409)
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 409,
+    "message": "Collection 'article-embeddings' already exists"
+  }
+}
+```
+</ResponseExample>

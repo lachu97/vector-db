@@ -1,0 +1,173 @@
+---
+title: TypeScript SDK
+description: Use VectorDB from Node.js, Deno, or any JavaScript environment.
+---
+
+## Installation
+
+```bash
+npm install vectordb-client
+```
+
+Or with yarn/pnpm:
+
+```bash
+yarn add vectordb-client
+pnpm add vectordb-client
+```
+
+## Initializing the Client
+
+```typescript
+import { VectorDBClient } from "vectordb-client";
+
+const client = new VectorDBClient({
+  baseUrl: "http://localhost:8000",
+  apiKey: "your-api-key",
+});
+```
+
+The SDK uses the native `fetch` API (available in Node.js 18+, browsers, Deno, and edge runtimes). For older Node.js, pass a custom fetch:
+
+```typescript
+import fetch from "node-fetch";
+
+const client = new VectorDBClient({
+  baseUrl: "http://localhost:8000",
+  apiKey: "your-api-key",
+  fetch: fetch as unknown as typeof globalThis.fetch,
+});
+```
+
+---
+
+## Collections
+
+```typescript
+// Create
+const col = await client.collections.create("articles", 384, "cosine");
+
+// List
+const cols = await client.collections.list();
+cols.forEach((c) => console.log(c.name, c.dim, c.vector_count));
+
+// Get
+const col = await client.collections.get("articles");
+
+// Delete
+await client.collections.delete("articles");
+```
+
+## Vectors
+
+```typescript
+// Upsert
+const result = await client.vectors.upsert(
+  "articles",
+  "doc-1",
+  [0.1, 0.2, 0.9],
+  { title: "Hello", tags: ["ml", "nlp"] }
+);
+console.log(result.status); // "inserted" or "updated"
+
+// Bulk upsert
+const items = vectors.map((v, i) => ({
+  external_id: `doc-${i}`,
+  vector: v,
+  metadata: { index: i },
+}));
+const bulk = await client.vectors.bulkUpsert("articles", items);
+
+// Delete
+await client.vectors.delete("articles", "doc-1");
+
+// Batch delete
+const deleted = await client.vectors.deleteBatch("articles", ["doc-1", "doc-2"]);
+console.log(deleted.deleted_count);
+```
+
+## Search
+
+```typescript
+// KNN search
+const results = await client.search.search("articles", queryVector, {
+  k: 10,
+  filters: { tags: "ml" },
+});
+for (const r of results.results) {
+  console.log(r.external_id, r.score, r.metadata);
+}
+
+// Recommendations
+const recs = await client.search.recommend("articles", "doc-1", { k: 5 });
+
+// Similarity between two stored vectors
+const score = await client.search.similarity("articles", "doc-1", "doc-2");
+
+// Rerank
+const reranked = await client.search.rerank("articles", queryVector, [
+  "doc-1",
+  "doc-2",
+  "doc-3",
+]);
+
+// Hybrid search
+const hybrid = await client.search.hybridSearch(
+  "articles",
+  "machine learning transformers",
+  queryVector,
+  { k: 10, alpha: 0.7 }
+);
+```
+
+## Error Handling
+
+```typescript
+import {
+  VectorDBError,
+  NotFoundError,
+  AlreadyExistsError,
+  DimensionMismatchError,
+  AuthenticationError,
+  RateLimitError,
+} from "vectordb-client";
+
+try {
+  await client.collections.create("my-col", 384);
+} catch (err) {
+  if (err instanceof AlreadyExistsError) {
+    console.log("Collection already exists");
+  } else if (err instanceof DimensionMismatchError) {
+    console.log("Wrong vector dimension");
+  } else if (err instanceof AuthenticationError) {
+    console.log("Invalid API key");
+  } else if (err instanceof VectorDBError) {
+    console.log(`Error ${err.statusCode}: ${err.message}`);
+  }
+}
+```
+
+## Health Check
+
+```typescript
+const health = await client.observability.health();
+console.log(health.status);           // "ok"
+console.log(health.total_vectors);
+console.log(health.total_collections);
+```
+
+## Full TypeScript Types
+
+All methods are fully typed. Key types:
+
+```typescript
+import type {
+  Collection,       // { name, dim, distance_metric, vector_count }
+  VectorResult,     // { external_id, score, metadata }
+  SearchResult,     // { results, collection, k }
+  UpsertResult,     // { external_id, status }
+  BulkUpsertResult, // { results }
+  HealthStats,      // { status, total_vectors, total_collections, collections }
+  SearchOptions,    // { k?, offset?, filters? }
+} from "vectordb-client";
+```
