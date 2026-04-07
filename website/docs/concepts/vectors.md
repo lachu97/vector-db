@@ -1,0 +1,132 @@
+---
+id: vectors
+title: Vectors & Metadata
+sidebar_label: Vectors & Metadata
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+## What is a Vector?
+
+A vector is an array of floating-point numbers that represents the semantic meaning of a piece of content. Two pieces of content with similar meaning will have vectors that are close together in the vector space.
+
+```python
+# The sentence "I love machine learning" might produce:
+vector = [0.123, -0.456, 0.789, ..., 0.321]  # 384 floats
+```
+
+You generate vectors using an **embedding model**. VectorDB stores and searches them — it does not generate embeddings.
+
+## Upserting Vectors
+
+Every vector needs an `external_id` — a string that uniquely identifies it within the collection.
+
+```python
+client.vectors.upsert(
+    collection="my-collection",
+    external_id="article-42",
+    vector=[0.1, 0.2, ..., 0.9],
+    metadata={"title": "How to train a model", "author": "Alice"},
+)
+```
+
+If the `external_id` already exists, the vector and metadata are **updated** (upsert semantics). The response indicates `"inserted"` or `"updated"`.
+
+## Bulk Upsert
+
+For high-throughput ingestion, use bulk upsert. It batches database writes and index insertions.
+
+```python
+items = [
+    {"external_id": "doc-1", "vector": [...], "metadata": {"tag": "ml"}},
+    {"external_id": "doc-2", "vector": [...], "metadata": {"tag": "nlp"}},
+    {"external_id": "doc-3", "vector": [...]},
+]
+result = client.vectors.bulk_upsert("my-collection", items)
+print(f"{len(result.inserted)} inserted, {len(result.updated)} updated")
+```
+
+:::note
+The default max batch size is 1000 items. Configure `MAX_BATCH_SIZE` to change it.
+:::
+
+## Metadata
+
+Metadata is a JSON object attached to a vector. Use it to store any structured data alongside your embeddings.
+
+```python
+metadata = {
+    "title": "Getting started with embeddings",
+    "author": "Bob",
+    "published_at": "2024-01-15",
+    "tags": ["tutorial", "embeddings"],
+    "view_count": 1523,
+}
+```
+
+**Metadata filtering** in search lets you narrow results to vectors that match specific metadata values:
+
+```python
+results = client.search.search(
+    "articles",
+    vector=query_vector,
+    k=10,
+    filters={"author": "Bob"},
+)
+```
+
+:::note
+Metadata is stored as JSON. Keys and values must be JSON-serializable. The default max metadata size is 10KB per vector.
+:::
+
+## Deleting Vectors
+
+```python
+# Delete one
+client.vectors.delete("my-collection", "article-42")
+
+# Delete many
+client.vectors.delete_batch("my-collection", ["doc-1", "doc-2", "doc-3"])
+```
+
+## Generating Embeddings
+
+VectorDB is embedding-model agnostic. Here are common ways to generate vectors:
+
+<Tabs>
+<TabItem value="sentence-transformers" label="sentence-transformers (local)">
+
+```python
+from sentence_transformers import SentenceTransformer
+
+model = SentenceTransformer("all-MiniLM-L6-v2")  # dim=384
+vector = model.encode("Hello world").tolist()
+```
+
+</TabItem>
+<TabItem value="openai" label="OpenAI">
+
+```python
+from openai import OpenAI
+
+openai = OpenAI()
+response = openai.embeddings.create(
+    model="text-embedding-3-small",
+    input="Hello world",
+)
+vector = response.data[0].embedding  # dim=1536
+```
+
+</TabItem>
+<TabItem value="ollama" label="Ollama (local)">
+
+```python
+import ollama
+
+response = ollama.embeddings(model="nomic-embed-text", prompt="Hello world")
+vector = response["embedding"]  # dim=768
+```
+
+</TabItem>
+</Tabs>

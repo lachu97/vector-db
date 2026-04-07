@@ -1,0 +1,224 @@
+---
+id: cli
+title: CLI Reference
+sidebar_label: CLI
+---
+
+## Installation
+
+The CLI is included with the Python SDK:
+
+```bash
+pip install vectordb-client
+```
+
+Verify the installation:
+
+```bash
+vdb --version
+```
+
+## Configuration
+
+Set your server URL and API key via environment variables to avoid passing them on every command:
+
+```bash
+export VECTORDB_URL=http://localhost:8000
+export VECTORDB_API_KEY=your-api-key
+```
+
+Or pass them as flags:
+
+```bash
+vdb --url http://localhost:8000 --api-key your-key <command>
+```
+
+## Global Options
+
+| Option | Env Var | Default | Description |
+|--------|---------|---------|-------------|
+| `--url` | `VECTORDB_URL` | `http://localhost:8000` | Server URL |
+| `--api-key` | `VECTORDB_API_KEY` | *(required)* | API key |
+| `-o, --output` | `VECTORDB_OUTPUT` | `table` | Output format: `table` or `json` |
+| `--version` | — | — | Show version |
+
+:::note
+`--output` and other global options must come **before** the subcommand:
+- `vdb -o json collections list` ✅
+- `vdb collections list -o json` ❌
+:::
+
+---
+
+## Commands
+
+### `vdb health`
+
+Show server health, uptime, and collection statistics.
+
+```bash
+vdb health
+vdb -o json health
+```
+
+### `vdb ping`
+
+Check if the server is reachable.
+
+```bash
+vdb ping
+# OK  http://localhost:8000
+```
+
+---
+
+### `vdb collections list`
+
+List all collections.
+
+```bash
+vdb collections list
+
+# NAME               DIM  METRIC  VECTORS
+# -----------------  ---  ------  -------
+# article-embeddings 384  cosine  10482
+# product-images     512  l2      55291
+```
+
+### `vdb collections create`
+
+Create a new collection.
+
+```bash
+vdb collections create <name> --dim <n> [--metric cosine|l2|ip]
+```
+
+```bash
+vdb collections create article-embeddings --dim 384
+vdb collections create product-images --dim 512 --metric l2
+```
+
+### `vdb collections get`
+
+Get details for a collection.
+
+```bash
+vdb collections get article-embeddings
+```
+
+### `vdb collections delete`
+
+Delete a collection and all its vectors. Prompts for confirmation unless `--yes` is passed.
+
+```bash
+vdb collections delete old-collection
+vdb collections delete old-collection --yes   # skip prompt
+```
+
+---
+
+### `vdb vectors upsert`
+
+Insert or update a vector.
+
+```bash
+vdb vectors upsert <collection> <id> <vector> [--metadata JSON]
+```
+
+The vector can be a JSON array or a file reference with `@`:
+
+```bash
+# Inline vector
+vdb vectors upsert articles doc-1 '[0.1, 0.2, 0.3]'
+
+# With metadata
+vdb vectors upsert articles doc-1 '[0.1, 0.2, 0.3]' \
+  --metadata '{"title": "Hello world", "author": "Alice"}'
+
+# From file
+vdb vectors upsert articles doc-1 @embedding.json
+```
+
+### `vdb vectors delete`
+
+Delete a single vector.
+
+```bash
+vdb vectors delete articles doc-1
+```
+
+### `vdb vectors delete-batch`
+
+Delete multiple vectors by ID.
+
+```bash
+vdb vectors delete-batch articles doc-1 doc-2 doc-3
+```
+
+---
+
+### `vdb search`
+
+KNN vector search.
+
+```bash
+vdb search <collection> <vector> [--k N] [--offset N] [--filter KEY=VALUE]
+```
+
+```bash
+vdb search articles '[0.1, 0.2, 0.3]' --k 5
+vdb search articles '[0.1, 0.2, 0.3]' --k 10 --filter author=Alice
+vdb search articles @query.json --k 5
+```
+
+### `vdb recommend`
+
+Find vectors similar to a stored vector (excludes the source).
+
+```bash
+vdb recommend <collection> <id> [--k N]
+```
+
+```bash
+vdb recommend articles doc-1 --k 5
+```
+
+### `vdb similarity`
+
+Compute cosine similarity between two stored vectors.
+
+```bash
+vdb similarity <collection> <id1> <id2>
+```
+
+```bash
+vdb similarity articles doc-1 doc-2
+# Similarity: 0.923451
+```
+
+### `vdb hybrid-search`
+
+Hybrid vector + keyword search.
+
+```bash
+vdb hybrid-search <collection> <query_text> <vector> [--k N] [--alpha 0.0-1.0]
+```
+
+```bash
+vdb hybrid-search articles "machine learning" '[0.1, 0.2, 0.3]' \
+  --k 10 --alpha 0.7
+```
+
+---
+
+## JSON Output
+
+Add `-o json` before any command to get machine-readable JSON output. Useful for scripting:
+
+```bash
+# Get all collection names
+vdb -o json collections list | python -c "import json,sys; print([c['name'] for c in json.load(sys.stdin)])"
+
+# Count vectors in a collection
+vdb -o json collections get articles | python -c "import json,sys; print(json.load(sys.stdin)['vector_count'])"
+```

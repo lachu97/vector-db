@@ -1,0 +1,164 @@
+---
+id: python
+title: Python SDK
+sidebar_label: Python SDK
+---
+
+## Installation
+
+```bash
+pip install vectordb-client
+```
+
+Or install from source:
+
+```bash
+pip install git+https://github.com/lachu97/vector-db.git#subdirectory=sdk/python
+```
+
+## Initializing the Client
+
+```python
+from vectordb_client import VectorDBClient
+
+client = VectorDBClient(
+    base_url="http://localhost:8000",
+    api_key="your-api-key",
+)
+```
+
+Use as a context manager to ensure the connection is closed:
+
+```python
+with VectorDBClient(base_url="http://localhost:8000", api_key="your-key") as client:
+    results = client.search.search("my-col", vector, k=5)
+```
+
+## Async Client
+
+For async applications (FastAPI, asyncio):
+
+```python
+from vectordb_client import AsyncVectorDBClient
+
+async with AsyncVectorDBClient(base_url="http://localhost:8000", api_key="your-key") as client:
+    col = await client.collections.create("my-col", dim=384)
+    results = await client.search.search("my-col", vector, k=5)
+```
+
+---
+
+## Collections
+
+```python
+# Create
+col = client.collections.create("articles", dim=384, distance_metric="cosine")
+
+# List
+cols = client.collections.list()
+
+# Get
+col = client.collections.get("articles")
+print(col.name, col.dim, col.vector_count)
+
+# Delete
+client.collections.delete("articles")
+```
+
+## Vectors
+
+```python
+# Upsert
+result = client.vectors.upsert(
+    collection="articles",
+    external_id="doc-1",
+    vector=[0.1, 0.2, ..., 0.9],
+    metadata={"title": "Hello", "tags": ["ml", "nlp"]},
+)
+print(result.status)  # "inserted" or "updated"
+
+# Bulk upsert
+items = [
+    {"external_id": f"doc-{i}", "vector": vectors[i], "metadata": {"i": i}}
+    for i in range(100)
+]
+bulk = client.vectors.bulk_upsert("articles", items)
+print(len(bulk.inserted), len(bulk.updated))
+
+# Delete
+client.vectors.delete("articles", "doc-1")
+
+# Batch delete
+client.vectors.delete_batch("articles", ["doc-1", "doc-2", "doc-3"])
+```
+
+## Search
+
+```python
+# KNN search
+results = client.search.search(
+    collection="articles",
+    vector=query_vector,
+    k=10,
+    offset=0,
+    filters={"tags": "ml"},  # optional metadata filter
+)
+for r in results:
+    print(r.external_id, r.score, r.metadata)
+
+# Recommendations (similar to a stored vector)
+recs = client.search.recommend("articles", external_id="doc-1", k=5)
+
+# Cosine similarity between two stored vectors
+score = client.search.similarity("articles", id1="doc-1", id2="doc-2")
+
+# Rerank a candidate set
+reranked = client.search.rerank(
+    collection="articles",
+    query_vector=query_vector,
+    candidates=["doc-1", "doc-2", "doc-3"],
+)
+
+# Hybrid search
+results = client.search.hybrid_search(
+    collection="articles",
+    query_text="machine learning",
+    vector=query_vector,
+    k=10,
+    alpha=0.7,
+)
+```
+
+## Error Handling
+
+```python
+from vectordb_client.exceptions import (
+    NotFoundError,
+    AlreadyExistsError,
+    DimensionMismatchError,
+    AuthenticationError,
+    RateLimitError,
+    VectorDBError,
+)
+
+try:
+    client.collections.create("my-col", dim=384)
+except AlreadyExistsError:
+    print("Collection already exists")
+except DimensionMismatchError as e:
+    print(f"Wrong dimension: {e}")
+except AuthenticationError:
+    print("Invalid API key")
+except VectorDBError as e:
+    print(f"Unexpected error: {e} (status={e.status_code})")
+```
+
+## Health Check
+
+```python
+health = client.observability.health()
+print(health.status)            # "ok"
+print(health.total_vectors)     # total across all collections
+print(health.total_collections)
+print(health.uptime_seconds)
+```

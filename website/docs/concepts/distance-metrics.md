@@ -1,0 +1,57 @@
+---
+id: distance-metrics
+title: Distance Metrics
+sidebar_label: Distance Metrics
+---
+
+VectorDB supports three distance metrics. The metric is set per collection at creation time and cannot be changed.
+
+## Cosine Similarity (`cosine`)
+
+Measures the angle between two vectors, ignoring magnitude. Returns a score between -1 and 1, where 1 means identical direction.
+
+**Best for:** Text embeddings, semantic search, most NLP use cases.
+
+Most embedding models (OpenAI, sentence-transformers) are trained to work with cosine similarity. VectorDB automatically L2-normalizes vectors at upsert time when using cosine, so the inner product of normalized vectors equals the cosine similarity.
+
+```python
+col = client.collections.create("articles", dim=384, distance_metric="cosine")
+```
+
+## Euclidean Distance (`l2`)
+
+Measures the straight-line distance between two points in vector space. Lower distance = more similar.
+
+**Best for:** Image embeddings, coordinates, any embedding where magnitude carries meaning.
+
+```python
+col = client.collections.create("images", dim=512, distance_metric="l2")
+```
+
+:::note
+Search results are returned as similarity scores (higher = more similar), even for L2. VectorDB converts the distance to a score internally.
+:::
+
+## Inner Product (`ip`)
+
+Computes the dot product of two vectors. Higher = more similar.
+
+**Best for:** Recommendation systems, collaborative filtering embeddings trained with inner product loss (e.g., some matrix factorization models).
+
+```python
+col = client.collections.create("recommendations", dim=128, distance_metric="ip")
+```
+
+## Which Should I Use?
+
+| Use Case | Recommended Metric |
+|----------|--------------------|
+| Semantic text search | `cosine` |
+| OpenAI embeddings | `cosine` |
+| sentence-transformers | `cosine` |
+| Image similarity | `l2` |
+| Geographic coordinates | `l2` |
+| Recommendation systems (trained with IP) | `ip` |
+| Not sure | `cosine` |
+
+When in doubt, use `cosine`. It's the default and works well for the vast majority of embedding models.

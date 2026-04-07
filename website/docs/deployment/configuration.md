@@ -1,0 +1,100 @@
+---
+id: configuration
+title: Configuration
+sidebar_label: Configuration
+---
+
+VectorDB is configured entirely through environment variables. All settings have sensible defaults for local development.
+
+## Core Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_KEY` | `test-key` | Default API key. **Change in production.** |
+| `PORT` | `8000` | Server port |
+| `WORKERS` | `4` | Gunicorn worker processes |
+| `DB_URL` | `sqlite:///./vectors.db` | Database connection string |
+| `VECTOR_DIM` | `384` | Default dimensionality for legacy (non-collection) endpoints |
+
+## Storage Backend
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STORAGE_BACKEND` | `sqlite` | `sqlite` or `postgres` |
+| `DB_URL` | `sqlite:///./vectors.db` | For SQLite: file path. For PostgreSQL: `postgresql+asyncpg://user:pass@host/db` |
+
+## HNSW Index
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `INDEX_PATH` | `data/index.bin` | Directory where HNSW index files are saved |
+| `MAX_ELEMENTS` | `10000` | Maximum vectors per collection index |
+| `EF_CONSTRUCTION` | `200` | HNSW build-time accuracy parameter. Higher = more accurate, slower builds |
+| `M` | `16` | HNSW graph connectivity. Higher = more accurate, more memory |
+| `EF_QUERY` | `50` | HNSW query-time accuracy parameter. Higher = more accurate, slower queries |
+
+:::note
+`MAX_ELEMENTS` sets the initial index capacity. Once reached, the index cannot accept new vectors. Set it to the maximum number of vectors you expect per collection. Typical production values: `100000` to `10000000`.
+:::
+
+## Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_PER_MINUTE` | `100` | Requests per minute per API key |
+
+## CORS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CORS_ORIGINS` | `["*"]` | Allowed origins. JSON array, e.g. `["https://app.example.com"]` |
+
+## Caching (Redis)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `REDIS_URL` | *(empty)* | Redis connection string. Leave empty to disable caching. E.g. `redis://localhost:6379` |
+| `CACHE_TTL` | `60` | Cache time-to-live in seconds |
+
+## Validation Limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_VECTOR_DIM` | `65536` | Maximum allowed vector dimension |
+| `MAX_METADATA_SIZE` | `10240` | Maximum metadata JSON size in bytes (10KB) |
+| `MAX_BATCH_SIZE` | `1000` | Maximum items in a bulk upsert or batch delete |
+
+## Logging & Observability
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_FORMAT` | `console` | `console` (human-readable) or `json` (structured, for log aggregators) |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+| `OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | *(empty)* | OTLP endpoint for traces (e.g. Jaeger, Tempo) |
+
+## Example: Production `.env`
+
+```bash
+API_KEY=sk-prod-your-secret-key-here
+STORAGE_BACKEND=postgres
+DB_URL=postgresql+asyncpg://vectordb:strongpassword@db:5432/vectordb
+WORKERS=8
+MAX_ELEMENTS=1000000
+REDIS_URL=redis://redis:6379
+CACHE_TTL=120
+RATE_LIMIT_PER_MINUTE=1000
+LOG_FORMAT=json
+CORS_ORIGINS=["https://app.yourcompany.com"]
+```
+
+## Example: Local Development `.env`
+
+```bash
+API_KEY=test-key
+DB_URL=sqlite:///./vectors.db
+WORKERS=1
+LOG_FORMAT=console
+LOG_LEVEL=DEBUG
+RATE_LIMIT_PER_MINUTE=100000
+```

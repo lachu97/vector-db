@@ -15,3 +15,5 @@ htmlcov/
 node_modules/
 sdk/typescript/dist/
 memory/
+website/.docusaurus/
+website/build/
