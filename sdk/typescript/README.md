@@ -158,4 +158,4 @@ const client = new VectorDBClient({
 
 ## Documentation
 
-Full docs at [lachu97.github.io/vector-db](https://lachu97.github.io/vector-db/)
+Full SDK reference and examples at [lachu97.github.io/vector-db/sdks/typescript](https://lachu97.github.io/vector-db/sdks/typescript)

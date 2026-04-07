@@ -14,7 +14,7 @@
   "keywords": ["vector", "database", "embeddings", "semantic-search", "rag", "ai"],
   "license": "MIT",
   "author": "lachu97",
-  "homepage": "https://lachu97.github.io/vector-db/",
+  "homepage": "https://lachu97.github.io/vector-db/sdks/typescript",
   "repository": {
     "type": "git",
     "url": "https://github.com/lachu97/vector-db.git",
