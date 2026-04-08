@@ -1,0 +1,66 @@
+---
+title: Export Vectors
+api: GET /v1/collections/{collection_name}/export
+description: Export all vectors in a collection as float arrays with metadata.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Collection to export from.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with any role.
+</ParamField>
+
+<ParamField query="limit" type="integer" default="10000">
+  Maximum number of vectors to export. Must be between 1 and 100,000.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl http://localhost:8000/v1/collections/articles/export?limit=100 \
+  -H "x-api-key: your-key"
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "collection": "articles",
+    "dim": 384,
+    "distance_metric": "cosine",
+    "count": 2,
+    "vectors": [
+      {
+        "external_id": "doc-1",
+        "vector": [0.123, 0.456, ...],
+        "metadata": {"title": "Hello World"}
+      },
+      {
+        "external_id": "doc-2",
+        "vector": [0.789, 0.012, ...],
+        "metadata": {"title": "Getting Started"}
+      }
+    ]
+  },
+  "error": null
+}
+```
+
+```json Not Found
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 404,
+    "message": "Collection 'nonexistent' not found"
+  }
+}
+```
+</ResponseExample>
+
+<Note>
+  For large collections, use the `limit` parameter to paginate exports. Vectors are returned in database insertion order.
+</Note>

@@ -38,6 +38,8 @@ const sidebars = {
         "api-reference/collections/create",
         "api-reference/collections/list",
         "api-reference/collections/get",
+        "api-reference/collections/update",
+        "api-reference/collections/export",
         "api-reference/collections/delete",
       ],
     },

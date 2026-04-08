@@ -44,15 +44,26 @@ const client = new VectorDBClient({
 ## Collections
 
 ```typescript
-// Create
-const col = await client.collections.create("articles", 384, "cosine");
+// Create (with optional description)
+const col = await client.collections.create("articles", 384, "cosine", "Blog article embeddings");
 
 // List
 const cols = await client.collections.list();
-cols.forEach((c) => console.log(c.name, c.dim, c.vector_count));
+cols.forEach((c) => console.log(c.name, c.dim, c.vector_count, c.description));
 
 // Get
 const col = await client.collections.get("articles");
+
+// Update description
+const updated = await client.collections.update("articles", "New description");
+
+// Clear description
+await client.collections.update("articles", null);
+
+// Export all vectors
+const exported = await client.collections.export("articles", 5000);
+console.log(exported.count); // number of vectors
+exported.vectors.forEach((v) => console.log(v.external_id, v.vector.length));
 
 // Delete
 await client.collections.delete("articles");
@@ -89,11 +100,12 @@ console.log(deleted.deleted_count);
 ## Search
 
 ```typescript
-// KNN search
+// KNN search (now returns total_count for pagination)
 const results = await client.search.search("articles", queryVector, {
   k: 10,
   filters: { tags: "ml" },
 });
+console.log(`Showing ${results.results.length} of ${results.total_count} total`);
 for (const r of results.results) {
   console.log(r.external_id, r.score, r.metadata);
 }
@@ -118,6 +130,45 @@ const hybrid = await client.search.hybridSearch(
   queryVector,
   { k: 10, alpha: 0.7 }
 );
+```
+
+## API Keys
+
+Manage API keys programmatically (requires admin role):
+
+```typescript
+// Create a key with optional expiry
+const key = await client.keys.create("production-app", "readwrite", 90);
+console.log(key.key); // only shown once — save it!
+
+// List all keys
+const keys = await client.keys.list();
+keys.forEach((k) => console.log(k.id, k.name, k.role, k.is_active));
+
+// Get a single key
+const fetched = await client.keys.get(2);
+
+// Update name/role
+await client.keys.update(2, { name: "renamed-key", role: "readonly" });
+
+// Revoke / Restore
+await client.keys.revoke(2);
+await client.keys.restore(2);
+
+// Rotate (regenerate key value)
+const rotated = await client.keys.rotate(2);
+console.log(rotated.key); // new key value — shown once
+
+// Usage stats for a key
+const usage = await client.keys.getUsage(2);
+console.log(usage.total_requests, usage.last_24h, usage.by_endpoint);
+
+// Usage summary across all keys
+const summary = await client.keys.getUsageSummary();
+console.log(summary.overall.total_requests);
+
+// Delete
+await client.keys.delete(2);
 ```
 
 ## Error Handling
@@ -162,11 +213,15 @@ All methods are fully typed. Key types:
 
 ```typescript
 import type {
-  Collection,       // { name, dim, distance_metric, vector_count }
+  Collection,       // { name, dim, distance_metric, vector_count, description? }
   VectorResult,     // { external_id, score, metadata }
-  SearchResult,     // { results, collection, k }
+  SearchResult,     // { results, collection, k, total_count, offset }
   UpsertResult,     // { external_id, status }
   BulkUpsertResult, // { results }
+  ExportResult,     // { collection, dim, distance_metric, count, vectors }
+  ApiKey,           // { id, name, role, is_active, created_at, expires_at?, key? }
+  KeyUsageStats,    // { total_requests, last_24h, last_7d, last_30d, by_endpoint }
+  UsageSummary,     // { overall, by_key }
   HealthStats,      // { status, total_vectors, total_collections, collections }
   SearchOptions,    // { k?, offset?, filters? }
 } from "vectordb-client";

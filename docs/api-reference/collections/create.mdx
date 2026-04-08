@@ -20,6 +20,10 @@ description: Create a new collection with a fixed dimension and distance metric.
   Distance metric for similarity calculations. One of: `cosine`, `l2`, `ip`.
 </ParamField>
 
+<ParamField body="description" type="string">
+  Optional human-readable description for the collection. Can be updated later via PATCH.
+</ParamField>
+
 <RequestExample>
 ```bash cURL
 curl -X POST http://localhost:8000/v1/collections \
@@ -28,7 +32,8 @@ curl -X POST http://localhost:8000/v1/collections \
   -d '{
     "name": "article-embeddings",
     "dim": 384,
-    "distance_metric": "cosine"
+    "distance_metric": "cosine",
+    "description": "Embeddings for blog articles"
   }'
 ```
 </RequestExample>
@@ -41,6 +46,7 @@ curl -X POST http://localhost:8000/v1/collections \
     "name": "article-embeddings",
     "dim": 384,
     "distance_metric": "cosine",
+    "description": "Embeddings for blog articles",
     "vector_count": 0,
     "created_at": "2024-01-15T10:00:00Z"
   },

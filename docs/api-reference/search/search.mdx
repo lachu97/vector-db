@@ -58,9 +58,16 @@ curl -X POST http://localhost:8000/v1/collections/articles/search \
         "score": 0.9541,
         "metadata": {"title": "Advanced topics", "author": "Alice"}
       }
-    ]
+    ],
+    "total_count": 150,
+    "k": 5,
+    "offset": 0
   },
   "error": null
 }
 ```
 </ResponseExample>
+
+<Note>
+  `total_count` returns the total number of vectors in the collection (before filtering). Use it with `offset` and `k` for pagination UI. Returns `-1` if the backend does not support counting.
+</Note>

@@ -1,6 +1,6 @@
 ---
 title: API Keys
-description: Create, list, and revoke API keys. Requires admin role.
+description: Full API key lifecycle — create, list, get, update, rotate, revoke, delete, and usage tracking. Requires admin role.
 ---
 
 ## List Keys
@@ -20,8 +20,14 @@ curl http://localhost:8000/v1/admin/keys \
   "status": "success",
   "data": {
     "keys": [
-      { "id": 1, "name": "default", "role": "admin", "created_at": "2024-01-01T00:00:00Z" },
-      { "id": 2, "name": "production-app", "role": "readwrite", "created_at": "2024-01-15T10:00:00Z" }
+      {
+        "id": 1, "name": "default", "role": "admin", "is_active": true,
+        "created_at": "2024-01-01T00:00:00Z", "expires_at": null, "last_used_at": "2024-01-16T09:00:00Z"
+      },
+      {
+        "id": 2, "name": "production-app", "role": "readwrite", "is_active": true,
+        "created_at": "2024-01-15T10:00:00Z", "expires_at": "2025-01-15T10:00:00Z", "last_used_at": null
+      }
     ]
   },
   "error": null
@@ -43,12 +49,16 @@ curl http://localhost:8000/v1/admin/keys \
   One of `admin`, `readwrite`, or `readonly`.
 </ParamField>
 
+<ParamField body="expires_in_days" type="integer">
+  Number of days until the key expires. Omit for no expiry.
+</ParamField>
+
 <RequestExample>
 ```bash cURL
 curl -X POST http://localhost:8000/v1/admin/keys \
   -H "x-api-key: your-admin-key" \
   -H "Content-Type: application/json" \
-  -d '{"name": "production-app", "role": "readwrite"}'
+  -d '{"name": "production-app", "role": "readwrite", "expires_in_days": 90}'
 ```
 </RequestExample>
 
@@ -61,7 +71,10 @@ curl -X POST http://localhost:8000/v1/admin/keys \
     "name": "production-app",
     "key": "sk-rw-abc123xyz...",
     "role": "readwrite",
-    "created_at": "2024-01-15T10:00:00Z"
+    "is_active": true,
+    "created_at": "2024-01-15T10:00:00Z",
+    "expires_at": "2024-04-15T10:00:00Z",
+    "last_used_at": null
   },
   "error": null
 }
@@ -69,8 +82,83 @@ curl -X POST http://localhost:8000/v1/admin/keys \
 </ResponseExample>
 
 <Warning>
-  The `key` value is only shown once. Copy it immediately.
+  The `key` value is only returned at creation and rotation. Copy it immediately — it cannot be retrieved later.
 </Warning>
+
+---
+
+## Get Key
+
+<api>GET /v1/admin/keys/{key_id}</api>
+
+<ParamField path="key_id" type="integer" required>
+  The numeric ID of the key.
+</ParamField>
+
+---
+
+## Update Key
+
+<api>PATCH /v1/admin/keys/{key_id}</api>
+
+Update a key's name, role, or active status. Use `is_active: false` to revoke, `is_active: true` to restore.
+
+<ParamField path="key_id" type="integer" required>
+  The numeric ID of the key.
+</ParamField>
+
+<ParamField body="name" type="string">
+  New name for the key.
+</ParamField>
+
+<ParamField body="role" type="string">
+  New role. One of `admin`, `readwrite`, `readonly`.
+</ParamField>
+
+<ParamField body="is_active" type="boolean">
+  Set to `false` to revoke the key, `true` to restore it.
+</ParamField>
+
+<RequestExample>
+```bash Revoke
+curl -X PATCH http://localhost:8000/v1/admin/keys/2 \
+  -H "x-api-key: your-admin-key" \
+  -H "Content-Type: application/json" \
+  -d '{"is_active": false}'
+```
+</RequestExample>
+
+---
+
+## Rotate Key
+
+<api>POST /v1/admin/keys/{key_id}/rotate</api>
+
+Regenerate the key value. The old key immediately stops working.
+
+<ParamField path="key_id" type="integer" required>
+  The numeric ID of the key to rotate.
+</ParamField>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "id": 2,
+    "name": "production-app",
+    "key": "sk-rw-new-secret-value...",
+    "role": "readwrite",
+    "is_active": true,
+    "rotated": true,
+    "created_at": "2024-01-15T10:00:00Z",
+    "expires_at": "2024-04-15T10:00:00Z",
+    "last_used_at": null
+  },
+  "error": null
+}
+```
+</ResponseExample>
 
 ---
 
@@ -78,22 +166,73 @@ curl -X POST http://localhost:8000/v1/admin/keys \
 
 <api>DELETE /v1/admin/keys/{key_id}</api>
 
+Permanently delete a key. This action cannot be undone.
+
 <ParamField path="key_id" type="integer" required>
-  The numeric ID of the key to revoke.
+  The numeric ID of the key to delete.
 </ParamField>
 
-<RequestExample>
-```bash cURL
-curl -X DELETE http://localhost:8000/v1/admin/keys/2 \
-  -H "x-api-key: your-admin-key"
-```
-</RequestExample>
+---
+
+## Key Usage
+
+<api>GET /v1/admin/keys/{key_id}/usage</api>
+
+Get usage statistics for a specific API key.
+
+<ParamField path="key_id" type="integer" required>
+  The numeric ID of the key.
+</ParamField>
 
 <ResponseExample>
 ```json Success
 {
   "status": "success",
-  "data": { "status": "deleted", "id": 2 },
+  "data": {
+    "key_id": 2,
+    "key_name": "production-app",
+    "total_requests": 842,
+    "last_24h": 38,
+    "last_7d": 215,
+    "last_30d": 842,
+    "by_endpoint": {
+      "/v1/collections/articles/search": 400,
+      "/v1/collections": 50,
+      "/v1/collections/articles/upsert": 392
+    },
+    "last_request_at": "2024-01-16T09:23:11Z"
+  },
+  "error": null
+}
+```
+</ResponseExample>
+
+---
+
+## Usage Summary
+
+<api>GET /v1/admin/keys/usage/summary</api>
+
+Get aggregate usage statistics across all API keys.
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "overall": {
+      "total_requests": 1200,
+      "last_24h": 80,
+      "last_7d": 400,
+      "last_30d": 1200,
+      "by_endpoint": {"/v1/collections/articles/search": 600},
+      "last_request_at": "2024-01-16T10:00:00Z"
+    },
+    "by_key": [
+      {"key_name": "production-app", "total_requests": 800, "last_24h": 50, "last_7d": 300, "last_30d": 800, "by_endpoint": {}, "last_request_at": "2024-01-16T10:00:00Z"},
+      {"key_name": "staging", "total_requests": 400, "last_24h": 30, "last_7d": 100, "last_30d": 400, "by_endpoint": {}, "last_request_at": "2024-01-16T09:00:00Z"}
+    ]
+  },
   "error": null
 }
 ```

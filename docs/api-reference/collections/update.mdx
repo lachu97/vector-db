@@ -1,0 +1,54 @@
+---
+title: Update Collection
+api: PATCH /v1/collections/{collection_name}
+description: Update a collection's description.
+---
+
+<ParamField path="collection_name" type="string" required>
+  Name of the collection to update.
+</ParamField>
+
+<ParamField header="x-api-key" type="string" required>
+  API key with `admin` or `readwrite` role.
+</ParamField>
+
+<ParamField body="description" type="string | null">
+  New description for the collection. Pass `null` to clear the description.
+</ParamField>
+
+<RequestExample>
+```bash cURL
+curl -X PATCH http://localhost:8000/v1/collections/articles \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{"description": "Updated description for articles"}'
+```
+</RequestExample>
+
+<ResponseExample>
+```json Success
+{
+  "status": "success",
+  "data": {
+    "name": "articles",
+    "dim": 384,
+    "distance_metric": "cosine",
+    "description": "Updated description for articles",
+    "vector_count": 150,
+    "created_at": "2024-01-15T10:00:00Z"
+  },
+  "error": null
+}
+```
+
+```json Not Found
+{
+  "status": "error",
+  "data": null,
+  "error": {
+    "code": 404,
+    "message": "Collection 'nonexistent' not found"
+  }
+}
+```
+</ResponseExample>
