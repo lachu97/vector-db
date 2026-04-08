@@ -3,12 +3,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security.api_key import APIKeyHeader
 from sqlalchemy.orm import Session
 
 from vectordb.config import get_settings
-from vectordb.models.db import ApiKey, get_db
+from vectordb.models.db import ApiKey, KeyUsageLog, get_db
 
 api_key_header = APIKeyHeader(name="x-api-key", auto_error=False)
 
@@ -57,9 +57,36 @@ def _lookup_key(api_key: Optional[str], db: Session) -> ApiKeyInfo:
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
+def _log_usage(db: Session, info: ApiKeyInfo, request: Request, status_code: int = 200):
+    """Best-effort usage log — never raises."""
+    try:
+        from fastapi import Request  # local import to avoid circular
+        key_id = None
+        # Try to find key_id for managed keys (not bootstrap)
+        if info.name != "bootstrap-admin":
+            row = db.query(ApiKey).filter_by(key=info.key, is_active=True).first()
+            if row:
+                key_id = row.id
+        log = KeyUsageLog(
+            key_id=key_id,
+            key_name=info.name,
+            endpoint=request.url.path,
+            method=request.method,
+            status_code=status_code,
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 def _require_role(minimum_role: str):
     """Return a FastAPI dependency that enforces a minimum role level."""
     def dependency(
+        request: Request,
         api_key: Optional[str] = Depends(api_key_header),
         db: Session = Depends(get_db),
     ) -> ApiKeyInfo:
@@ -69,6 +96,7 @@ def _require_role(minimum_role: str):
                 status_code=403,
                 detail=f"Insufficient permissions. Required role: {minimum_role}",
             )
+        _log_usage(db, info, request)
         return info
     return dependency
 

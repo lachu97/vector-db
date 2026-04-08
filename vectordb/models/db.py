@@ -36,6 +36,7 @@ class Collection(Base):
     name = Column(String, unique=True, nullable=False, index=True)
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")  # cosine, l2, ip
+    description = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     vectors = relationship("Vector", back_populates="collection", cascade="all, delete-orphan")
 
@@ -54,6 +55,17 @@ class Vector(Base):
     __table_args__ = (
         UniqueConstraint("collection_id", "external_id", name="uq_collection_external_id"),
     )
+
+
+class KeyUsageLog(Base):
+    __tablename__ = "key_usage_logs"
+    id = Column(Integer, primary_key=True, index=True)
+    key_id = Column(Integer, nullable=True, index=True)   # null for bootstrap key
+    key_name = Column(String, nullable=False)
+    endpoint = Column(String, nullable=False)
+    method = Column(String, nullable=False)
+    status_code = Column(Integer, nullable=False)
+    timestamp = Column(DateTime, server_default=func.now(), index=True)
 
 
 class ApiKey(Base):

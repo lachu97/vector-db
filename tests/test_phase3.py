@@ -135,7 +135,7 @@ class TestApiKeyManagement:
         key_id = create_resp.json()["data"]["id"]
         delete_resp = client.delete(f"/v1/admin/keys/{key_id}", headers=admin_headers)
         assert delete_resp.status_code == 200
-        assert delete_resp.json()["data"]["status"] == "deleted"
+        assert delete_resp.json()["data"]["deleted"] is True
 
     def test_delete_key_not_found(self, client, admin_headers):
         resp = client.delete("/v1/admin/keys/99999", headers=admin_headers)

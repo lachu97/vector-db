@@ -1,5 +1,6 @@
 # vectordb/routers/keys.py
 import secrets
+from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
@@ -9,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from vectordb.auth import ApiKeyInfo, require_admin
-from vectordb.models.db import ApiKey, get_db
+from vectordb.models.db import ApiKey, KeyUsageLog, get_db
 from vectordb.services.vector_service import success_response, error_response
 
 logger = structlog.get_logger(__name__)
@@ -181,6 +182,71 @@ def rotate_api_key(
     data = _format_key(row, include_key=True)
     data["rotated"] = True
     return success_response(data)
+
+
+# ------------------------------------------------------------------
+# GET /v1/admin/keys/:id/usage — usage stats for one key
+# ------------------------------------------------------------------
+
+def _build_usage_stats(logs: list) -> dict:
+    """Build usage stats dict from a list of KeyUsageLog rows."""
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    last_24h = sum(1 for l in logs if l.timestamp and (now - l.timestamp).total_seconds() < 86400)
+    last_7d = sum(1 for l in logs if l.timestamp and (now - l.timestamp).days < 7)
+    last_30d = sum(1 for l in logs if l.timestamp and (now - l.timestamp).days < 30)
+
+    by_endpoint = defaultdict(int)
+    for l in logs:
+        by_endpoint[l.endpoint] += 1
+
+    return {
+        "total_requests": len(logs),
+        "last_24h": last_24h,
+        "last_7d": last_7d,
+        "last_30d": last_30d,
+        "by_endpoint": dict(sorted(by_endpoint.items(), key=lambda x: -x[1])),
+        "last_request_at": str(logs[-1].timestamp) if logs else None,
+    }
+
+
+@router.get("/{key_id}/usage")
+def get_key_usage(
+    key_id: int,
+    db: Session = Depends(get_db),
+    auth: ApiKeyInfo = Depends(require_admin),
+):
+    row = db.query(ApiKey).filter_by(id=key_id).first()
+    if not row:
+        return error_response(404, f"API key {key_id} not found")
+
+    logs = db.query(KeyUsageLog).filter_by(key_id=key_id).order_by(KeyUsageLog.timestamp).all()
+    return success_response({"key_id": key_id, "key_name": row.name, **_build_usage_stats(logs)})
+
+
+# ------------------------------------------------------------------
+# GET /v1/admin/usage — usage stats across all keys
+# ------------------------------------------------------------------
+
+@router.get("/usage/summary")
+def get_usage_summary(
+    db: Session = Depends(get_db),
+    auth: ApiKeyInfo = Depends(require_admin),
+):
+    logs = db.query(KeyUsageLog).order_by(KeyUsageLog.timestamp).all()
+    by_key = defaultdict(list)
+    for l in logs:
+        by_key[l.key_name].append(l)
+
+    keys_summary = [
+        {"key_name": name, **_build_usage_stats(key_logs)}
+        for name, key_logs in by_key.items()
+    ]
+    keys_summary.sort(key=lambda x: -x["total_requests"])
+
+    return success_response({
+        "overall": _build_usage_stats(logs),
+        "by_key": keys_summary,
+    })
 
 
 # ------------------------------------------------------------------

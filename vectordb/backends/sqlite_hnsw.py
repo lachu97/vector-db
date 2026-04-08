@@ -52,6 +52,7 @@ class _Collection(Base):
     name = Column(String, unique=True, nullable=False, index=True)
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")
+    description = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     vectors = relationship("_Vector", back_populates="collection", cascade="all, delete-orphan", lazy="raise")
 
@@ -95,6 +96,7 @@ def _col_to_dict(col: _Collection, vec_count: int) -> Dict[str, Any]:
         "name": col.name,
         "dim": col.dim,
         "distance_metric": col.distance_metric,
+        "description": col.description,
         "vector_count": vec_count,
         "created_at": str(col.created_at),
     }
@@ -169,12 +171,14 @@ class SQLiteHNSWBackend(VectorBackend):
     # Collections
     # ------------------------------------------------------------------
 
-    async def create_collection(self, name: str, dim: int, distance_metric: str) -> Dict[str, Any]:
+    async def create_collection(
+        self, name: str, dim: int, distance_metric: str, description: Optional[str] = None
+    ) -> Dict[str, Any]:
         async with self._session_factory() as session:
             existing = await session.execute(select(_Collection).where(_Collection.name == name))
             if existing.scalar_one_or_none():
                 raise CollectionAlreadyExistsError(name)
-            col = _Collection(name=name, dim=dim, distance_metric=distance_metric)
+            col = _Collection(name=name, dim=dim, distance_metric=distance_metric, description=description)
             session.add(col)
             await session.commit()
             await session.refresh(col)
@@ -657,6 +661,67 @@ class SQLiteHNSWBackend(VectorBackend):
                 "total_collections": len(collections),
                 "collections": col_stats,
             }
+
+    # ------------------------------------------------------------------
+    # Extensions
+    # ------------------------------------------------------------------
+
+    async def update_collection(self, name: str, description: Optional[str]) -> Optional[Dict[str, Any]]:
+        async with self._session_factory() as session:
+            result = await session.execute(select(_Collection).where(_Collection.name == name))
+            col = result.scalar_one_or_none()
+            if not col:
+                return None
+            col.description = description
+            await session.commit()
+            await session.refresh(col)
+            count = await self._vec_count(session, col.id)
+            return _col_to_dict(col, count)
+
+    async def count_vectors(
+        self, collection_name: str, filters: Optional[Dict[str, Any]] = None
+    ) -> int:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(_Collection).where(_Collection.name == collection_name)
+            )
+            col = result.scalar_one_or_none()
+            if not col:
+                return 0
+            if not filters:
+                return await self._vec_count(session, col.id)
+            # Filtered count: must scan metadata
+            rows_res = await session.execute(
+                select(_Vector).where(_Vector.collection_id == col.id)
+            )
+            return sum(
+                1 for r in rows_res.scalars().all()
+                if _matches_filters(r.meta, filters)
+            )
+
+    async def export_vectors(
+        self, collection_name: str, limit: int = 10000
+    ) -> List[Dict[str, Any]]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(_Collection).where(_Collection.name == collection_name)
+            )
+            col = result.scalar_one_or_none()
+            if not col:
+                return []
+            rows_res = await session.execute(
+                select(_Vector)
+                .where(_Vector.collection_id == col.id)
+                .limit(limit)
+            )
+            out = []
+            for row in rows_res.scalars().all():
+                out.append({
+                    "external_id": row.external_id,
+                    "vector": decode_vector(row.vector).tolist(),
+                    "metadata": row.meta,
+                })
+            return out
 
     # ------------------------------------------------------------------
     # Legacy: ensure default collection exists (for legacy endpoints)

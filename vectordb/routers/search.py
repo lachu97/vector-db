@@ -46,7 +46,13 @@ async def search_in_collection(
 ):
     try:
         results = await backend.search(collection_name, req.vector, req.k, req.offset, req.filters)
-        return success_response({"results": results})
+        total_count = await backend.count_vectors(collection_name, req.filters)
+        return success_response({
+            "results": results,
+            "total_count": total_count,
+            "k": req.k,
+            "offset": req.offset,
+        })
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:
@@ -137,7 +143,13 @@ async def search_legacy(
     await _ensure_default(backend)
     try:
         results = await backend.search(DEFAULT_COLLECTION, req.vector, req.k, req.offset, req.filters)
-        return success_response({"results": results})
+        total_count = await backend.count_vectors(DEFAULT_COLLECTION, req.filters)
+        return success_response({
+            "results": results,
+            "total_count": total_count,
+            "k": req.k,
+            "offset": req.offset,
+        })
     except (CollectionNotFoundError, DimensionMismatchError) as e:
         return error_response(400, str(e))
 

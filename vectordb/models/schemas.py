@@ -9,7 +9,12 @@ from typing import List, Optional, Dict, Any
 class CreateCollectionRequest(BaseModel):
     name: str
     dim: int
-    distance_metric: str = "cosine"  # cosine, l2, ip
+    distance_metric: str = "cosine"
+    description: Optional[str] = None
+
+
+class UpdateCollectionRequest(BaseModel):
+    description: Optional[str] = None  # cosine, l2, ip
 
 
 # ------------------------------------------------------------------

@@ -64,7 +64,7 @@ class VectorBackend(ABC):
 
     @abstractmethod
     async def create_collection(
-        self, name: str, dim: int, distance_metric: str
+        self, name: str, dim: int, distance_metric: str, description: Optional[str] = None
     ) -> Dict[str, Any]:
         """Create a new collection. Raises CollectionAlreadyExistsError if it exists."""
 
@@ -186,3 +186,23 @@ class VectorBackend(ABC):
         Return {"total_vectors", "total_collections", "collections": [...]}.
         Used by the health endpoint.
         """
+
+    # ------------------------------------------------------------------
+    # Optional extensions (non-abstract — backends return None/[] if unsupported)
+    # ------------------------------------------------------------------
+
+    async def update_collection(self, name: str, description: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Update collection metadata. Returns updated dict or None if unsupported."""
+        return None
+
+    async def count_vectors(
+        self, collection_name: str, filters: Optional[Dict[str, Any]] = None
+    ) -> int:
+        """Return total number of vectors matching optional filters. Returns -1 if unsupported."""
+        return -1
+
+    async def export_vectors(
+        self, collection_name: str, limit: int = 10000
+    ) -> List[Dict[str, Any]]:
+        """Export vectors as list of {external_id, vector, metadata}. Returns [] if unsupported."""
+        return []
