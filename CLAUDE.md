@@ -119,6 +119,11 @@ All endpoints (except `/`) require `x-api-key` header.
   - TypeScript SDK: `sdk/typescript/src/` — update `types.ts`, the relevant resource file under `resources/`, and bump version in `package.json`
   - Add tests for new SDK methods in `tests/test_phase6_python_sdk.py` and `sdk/typescript/src/__tests__/`
 - **Frontend sync rule:** Any new API endpoint or changed behavior MUST be documented in `vector-db-web/CLAUDE.md` (Backend Changelog section) so the frontend Claude can implement it. Include: endpoint path, method, request body, response shape, and required UI changes.
+- **Docs sync rule:** Any new API endpoint, changed request/response shape, or new feature MUST be reflected in the documentation before the work is considered done:
+  - API reference: `docs/api-reference/` — add or update the relevant `.mdx` file with params, request/response examples
+  - SDK docs: `docs/sdks/python.mdx` and `docs/sdks/typescript.mdx` — add usage examples for new methods
+  - Navigation: `website/sidebars.js` — add new pages to the sidebar
+  - Concepts: `docs/concepts/` — update if the feature introduces a new concept (e.g. new distance metric, new search mode)
 
 ## Running
 ```bash
