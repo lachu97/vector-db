@@ -46,6 +46,7 @@ class _PgCollection(PgBase):
     name = Column(String, unique=True, nullable=False, index=True)
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")
+    description = Column(Text, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -133,14 +134,16 @@ class PostgresVectorBackend(VectorBackend):
     # Collections
     # ------------------------------------------------------------------
 
-    async def create_collection(self, name: str, dim: int, distance_metric: str) -> Dict[str, Any]:
+    async def create_collection(
+        self, name: str, dim: int, distance_metric: str, description: Optional[str] = None
+    ) -> Dict[str, Any]:
         async with self._session_factory() as session:
             existing = await session.execute(
                 select(_PgCollection).where(_PgCollection.name == name)
             )
             if existing.scalar_one_or_none():
                 raise CollectionAlreadyExistsError(name)
-            col = _PgCollection(name=name, dim=dim, distance_metric=distance_metric)
+            col = _PgCollection(name=name, dim=dim, distance_metric=distance_metric, description=description)
             session.add(col)
             await session.commit()
             await session.refresh(col)
@@ -160,8 +163,7 @@ class PostgresVectorBackend(VectorBackend):
             ))
 
         logger.info("pg_collection_created", name=name, dim=dim, metric=distance_metric)
-        return {"name": name, "dim": dim, "distance_metric": distance_metric,
-                "vector_count": 0, "created_at": str(col.created_at)}
+        return self._col_dict(col, 0)
 
     async def get_collection(self, name: str) -> Optional[Dict[str, Any]]:
         async with self._session_factory() as session:
@@ -202,6 +204,49 @@ class PostgresVectorBackend(VectorBackend):
                 await conn.run_sync(vt.drop)
             self._metadata.remove(vt)
         logger.info("pg_collection_deleted", name=name)
+
+    async def update_collection(self, name: str, description: Optional[str]) -> Optional[Dict[str, Any]]:
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(_PgCollection).where(_PgCollection.name == name)
+            )
+            col = result.scalar_one_or_none()
+            if not col:
+                return None
+            col.description = description
+            await session.commit()
+            await session.refresh(col)
+            count = await self._vec_count(session, name)
+            return self._col_dict(col, count)
+
+    async def count_vectors(
+        self, collection_name: str, filters: Optional[Dict[str, Any]] = None
+    ) -> int:
+        async with self._session_factory() as session:
+            return await self._vec_count(session, collection_name)
+
+    async def export_vectors(
+        self, collection_name: str, limit: int = 10000
+    ) -> List[Dict[str, Any]]:
+        col = await self._require_collection_row(collection_name)
+        vt = self._ensure_vector_table(collection_name, col.dim)
+
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                select(vt.c.external_id, vt.c.embedding, vt.c.meta)
+                .order_by(vt.c.id)
+                .limit(limit)
+            )
+            rows = result.fetchall()
+
+        return [
+            {
+                "external_id": r.external_id,
+                "vector": list(r.embedding) if r.embedding is not None else [],
+                "metadata": r.meta or {},
+            }
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------
     # Vectors
@@ -599,6 +644,7 @@ class PostgresVectorBackend(VectorBackend):
             "name": col.name,
             "dim": col.dim,
             "distance_metric": col.distance_metric,
+            "description": col.description,
             "vector_count": vec_count,
             "created_at": str(col.created_at),
         }

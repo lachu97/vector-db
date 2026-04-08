@@ -390,6 +390,106 @@ class TestPostgresVectorBackend:
         asyncio.run(run())
 
 
+@pytest.mark.skipif(not PG_TEST_URL, reason="PG_TEST_URL not set — skipping PostgreSQL tests")
+class TestPostgresNewFeatures:
+    """Tests for description, update_collection, count_vectors, export_vectors on Postgres."""
+
+    @pytest.fixture(scope="class")
+    def pg_backend(self):
+        from vectordb.backends.postgres_pgvector import PostgresVectorBackend
+        from vectordb.config import get_settings
+        settings = get_settings()
+        backend = PostgresVectorBackend(PG_TEST_URL, settings)
+        asyncio.run(backend.startup())
+        yield backend
+        # cleanup
+        async def teardown():
+            try:
+                await backend.delete_collection("pg-desc")
+            except Exception:
+                pass
+            try:
+                await backend.delete_collection("pg-export")
+            except Exception:
+                pass
+            await backend.shutdown()
+        asyncio.run(teardown())
+
+    def test_create_with_description(self, pg_backend):
+        async def run():
+            col = await pg_backend.create_collection("pg-desc", 16, "cosine", description="test desc")
+            assert col["description"] == "test desc"
+        asyncio.run(run())
+
+    def test_update_collection_description(self, pg_backend):
+        async def run():
+            updated = await pg_backend.update_collection("pg-desc", "updated!")
+            assert updated is not None
+            assert updated["description"] == "updated!"
+        asyncio.run(run())
+
+    def test_update_collection_clear_description(self, pg_backend):
+        async def run():
+            updated = await pg_backend.update_collection("pg-desc", None)
+            assert updated is not None
+            assert updated["description"] is None
+        asyncio.run(run())
+
+    def test_update_nonexistent_collection(self, pg_backend):
+        async def run():
+            result = await pg_backend.update_collection("nonexistent-pg", "x")
+            assert result is None
+        asyncio.run(run())
+
+    def test_count_vectors_empty(self, pg_backend):
+        async def run():
+            count = await pg_backend.count_vectors("pg-desc")
+            assert count == 0
+        asyncio.run(run())
+
+    def test_count_vectors_with_data(self, pg_backend):
+        async def run():
+            await pg_backend.upsert("pg-desc", "c1", random_vector(16), None, None)
+            await pg_backend.upsert("pg-desc", "c2", random_vector(16), None, None)
+            count = await pg_backend.count_vectors("pg-desc")
+            assert count == 2
+        asyncio.run(run())
+
+    def test_export_vectors(self, pg_backend):
+        async def run():
+            await pg_backend.create_collection("pg-export", 16, "cosine")
+            for i in range(5):
+                await pg_backend.upsert("pg-export", f"ex{i}", random_vector(16), {"i": i}, None)
+            exported = await pg_backend.export_vectors("pg-export", limit=10)
+            assert len(exported) == 5
+            assert "external_id" in exported[0]
+            assert "vector" in exported[0]
+            assert len(exported[0]["vector"]) == 16
+        asyncio.run(run())
+
+    def test_export_with_limit(self, pg_backend):
+        async def run():
+            exported = await pg_backend.export_vectors("pg-export", limit=2)
+            assert len(exported) == 2
+        asyncio.run(run())
+
+    def test_description_in_list(self, pg_backend):
+        async def run():
+            await pg_backend.update_collection("pg-desc", "listed")
+            cols = await pg_backend.list_collections()
+            found = next((c for c in cols if c["name"] == "pg-desc"), None)
+            assert found is not None
+            assert found["description"] == "listed"
+        asyncio.run(run())
+
+    def test_description_in_get(self, pg_backend):
+        async def run():
+            col = await pg_backend.get_collection("pg-desc")
+            assert col is not None
+            assert col["description"] == "listed"
+        asyncio.run(run())
+
+
 # ===========================================================================
 # 6. Config: backend selection
 # ===========================================================================
