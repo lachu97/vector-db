@@ -172,13 +172,20 @@ class TestApiKeyManagement:
 class TestRoleEnforcement:
     # --- Admin-only endpoints ---
 
-    def test_create_collection_requires_admin(self, client, rw_headers, ro_headers):
-        for hdrs in (rw_headers, ro_headers):
-            resp = client.post("/v1/collections", json={
-                "name": "should-not-create",
-                "dim": 32,
-            }, headers=hdrs)
-            assert resp.status_code == 403
+    def test_create_collection_requires_readwrite(self, client, rw_headers, ro_headers):
+        # readwrite CAN create collections
+        resp = client.post("/v1/collections", json={
+            "name": "rw-created-col",
+            "dim": 32,
+        }, headers=rw_headers)
+        assert resp.status_code == 200
+
+        # readonly CANNOT create collections
+        resp = client.post("/v1/collections", json={
+            "name": "should-not-create",
+            "dim": 32,
+        }, headers=ro_headers)
+        assert resp.status_code == 403
 
     def test_delete_collection_requires_admin(self, client, rw_headers, ro_headers):
         for hdrs in (rw_headers, ro_headers):

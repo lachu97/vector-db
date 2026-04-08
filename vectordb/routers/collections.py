@@ -2,7 +2,7 @@
 import structlog
 from fastapi import APIRouter, Depends
 
-from vectordb.auth import ApiKeyInfo, require_admin, require_readonly
+from vectordb.auth import ApiKeyInfo, require_admin, require_readonly, require_readwrite
 from vectordb.backends import get_backend
 from vectordb.backends.base import (
     CollectionAlreadyExistsError,
@@ -23,7 +23,7 @@ VALID_METRICS = {"cosine", "l2", "ip"}
 async def create_collection(
     req: CreateCollectionRequest,
     backend: VectorBackend = Depends(get_backend),
-    auth: ApiKeyInfo = Depends(require_admin),
+    auth: ApiKeyInfo = Depends(require_readwrite),
 ):
     settings = get_settings()
     if req.distance_metric not in VALID_METRICS:
@@ -66,7 +66,7 @@ async def update_collection(
     name: str,
     req: UpdateCollectionRequest,
     backend: VectorBackend = Depends(get_backend),
-    auth: ApiKeyInfo = Depends(require_admin),
+    auth: ApiKeyInfo = Depends(require_readwrite),
 ):
     result = await backend.update_collection(name, req.description)
     if result is None:
