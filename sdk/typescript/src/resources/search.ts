@@ -18,12 +18,20 @@ export class SearchResource {
     const body: Record<string, unknown> = { vector, k, offset };
     if (filters !== undefined) body.filters = filters;
 
-    const data = await this.http.request<{ results: VectorResult[] }>(
-      "POST",
-      `/v1/collections/${collection}/search`,
-      { body }
-    );
-    return { results: data.results, collection, k };
+    const data = await this.http.request<{
+      results: VectorResult[];
+      total_count: number;
+      k: number;
+      offset: number;
+    }>("POST", `/v1/collections/${collection}/search`, { body });
+
+    return {
+      results: data.results,
+      collection,
+      k: data.k ?? k,
+      total_count: data.total_count ?? -1,
+      offset: data.offset ?? offset,
+    };
   }
 
   async recommend(
@@ -37,7 +45,7 @@ export class SearchResource {
       `/v1/collections/${collection}/recommend/${externalId}`,
       { body: { k, offset } }
     );
-    return { results: data.results, collection, k };
+    return { results: data.results, collection, k, total_count: -1, offset };
   }
 
   async similarity(
@@ -87,6 +95,6 @@ export class SearchResource {
       `/v1/collections/${collection}/hybrid_search`,
       { body }
     );
-    return { results: data.results, collection, k };
+    return { results: data.results, collection, k, total_count: -1, offset };
   }
 }

@@ -412,3 +412,154 @@ class TestSDKModels:
         })
         assert h.total_vectors == 100
         assert h.total_collections == 3
+
+
+# ---------------------------------------------------------------------------
+# New feature tests: description, export, total_count, keys resource
+# ---------------------------------------------------------------------------
+
+class TestSyncSDKNewFeatures:
+    @pytest.fixture(scope="class")
+    def sdk(self, client):
+        s = _make_sync_client(client)
+        s.keys._session = client
+        return s
+
+    def test_create_collection_with_description(self, sdk):
+        col = sdk.collections.create("sdk-desc-col", dim=16, description="test desc")
+        assert col.description == "test desc"
+
+    def test_update_collection_description(self, sdk):
+        sdk.collections.create("sdk-update-desc", dim=16)
+        col = sdk.collections.update("sdk-update-desc", "updated!")
+        assert col.description == "updated!"
+
+    def test_update_collection_clear_description(self, sdk):
+        sdk.collections.create("sdk-clear-desc", dim=16, description="initial")
+        col = sdk.collections.update("sdk-clear-desc", None)
+        assert col.description is None
+
+    def test_export_empty_collection(self, sdk):
+        sdk.collections.create("sdk-export-empty", dim=16)
+        result = sdk.collections.export("sdk-export-empty")
+        assert result.count == 0
+        assert result.vectors == []
+
+    def test_export_with_vectors(self, sdk):
+        sdk.collections.create("sdk-export-full", dim=16)
+        for i in range(3):
+            sdk.vectors.upsert("sdk-export-full", f"e{i}", random_vector(16))
+        result = sdk.collections.export("sdk-export-full")
+        assert result.count == 3
+        assert len(result.vectors) == 3
+        assert len(result.vectors[0].vector) == 16
+
+    def test_search_returns_total_count(self, sdk):
+        sdk.collections.create("sdk-tc-col", dim=16)
+        for i in range(5):
+            sdk.vectors.upsert("sdk-tc-col", f"tc{i}", random_vector(16))
+        result = sdk.search.search("sdk-tc-col", random_vector(16), k=3)
+        assert result.total_count >= 5
+        assert result.offset == 0
+        assert result.k == 3
+
+    def test_keys_create_and_list(self, sdk):
+        key = sdk.keys.create("sdk-test-key", role="readonly")
+        assert key.name == "sdk-test-key"
+        assert key.role == "readonly"
+        assert key.key is not None  # returned at creation
+        keys = sdk.keys.list()
+        assert any(k.name == "sdk-test-key" for k in keys)
+
+    def test_keys_get(self, sdk):
+        key = sdk.keys.create("sdk-get-key", role="readwrite")
+        fetched = sdk.keys.get(key.id)
+        assert fetched.id == key.id
+        assert fetched.name == "sdk-get-key"
+
+    def test_keys_update(self, sdk):
+        key = sdk.keys.create("sdk-upd-key", role="readonly")
+        updated = sdk.keys.update(key.id, name="sdk-upd-key-renamed")
+        assert updated.name == "sdk-upd-key-renamed"
+
+    def test_keys_revoke_restore(self, sdk):
+        key = sdk.keys.create("sdk-revoke-key", role="readonly")
+        revoked = sdk.keys.revoke(key.id)
+        assert revoked.is_active is False
+        restored = sdk.keys.restore(key.id)
+        assert restored.is_active is True
+
+    def test_keys_rotate(self, sdk):
+        key = sdk.keys.create("sdk-rotate-key", role="readonly")
+        rotated = sdk.keys.rotate(key.id)
+        assert rotated.key is not None
+        assert rotated.key != key.key
+
+    def test_keys_get_usage(self, sdk):
+        key = sdk.keys.create("sdk-usage-key", role="readonly")
+        usage = sdk.keys.get_usage(key.id)
+        assert usage.total_requests >= 0
+        assert "last_24h" in usage.__dataclass_fields__
+
+    def test_keys_usage_summary(self, sdk):
+        data = sdk.keys.get_usage_summary()
+        assert "overall" in data
+        assert "by_key" in data
+
+    def test_keys_delete(self, sdk):
+        key = sdk.keys.create("sdk-del-key", role="readonly")
+        result = sdk.keys.delete(key.id)
+        assert result["deleted"] is True
+
+
+class TestSDKModelsNew:
+    def test_collection_description_field(self):
+        from vectordb_client.models import Collection
+        col = Collection.from_dict({
+            "name": "c", "dim": 4, "distance_metric": "cosine",
+            "description": "hello",
+        })
+        assert col.description == "hello"
+
+    def test_collection_no_description(self):
+        from vectordb_client.models import Collection
+        col = Collection.from_dict({"name": "c", "dim": 4, "distance_metric": "cosine"})
+        assert col.description is None
+
+    def test_search_result_total_count(self):
+        from vectordb_client.models import SearchResult
+        sr = SearchResult.from_dict(
+            {"results": [], "total_count": 42, "offset": 5},
+            collection="col", k=10,
+        )
+        assert sr.total_count == 42
+        assert sr.offset == 5
+
+    def test_export_result(self):
+        from vectordb_client.models import ExportResult
+        er = ExportResult.from_dict({
+            "collection": "c", "dim": 4, "distance_metric": "cosine",
+            "count": 1, "vectors": [{"external_id": "x", "vector": [1.0, 2.0, 3.0, 4.0]}],
+        })
+        assert er.count == 1
+        assert er.vectors[0].external_id == "x"
+        assert len(er.vectors[0].vector) == 4
+
+    def test_api_key_model(self):
+        from vectordb_client.models import ApiKey
+        k = ApiKey.from_dict({
+            "id": 1, "name": "prod", "role": "readwrite",
+            "is_active": True, "created_at": "2026-01-01",
+            "expires_at": None, "last_used_at": None, "key": "abc123",
+        })
+        assert k.id == 1
+        assert k.key == "abc123"
+
+    def test_key_usage_stats_model(self):
+        from vectordb_client.models import KeyUsageStats
+        s = KeyUsageStats.from_dict({
+            "total_requests": 10, "last_24h": 2, "last_7d": 5, "last_30d": 10,
+            "by_endpoint": {"/v1/search": 8}, "last_request_at": "2026-01-01",
+        })
+        assert s.total_requests == 10
+        assert s.by_endpoint["/v1/search"] == 8

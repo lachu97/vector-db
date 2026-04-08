@@ -7,7 +7,10 @@ import requests
 
 from vectordb_client._http import _raise_for_response, _unwrap
 from vectordb_client.models import (
+    ApiKey,
     Collection,
+    ExportResult,
+    KeyUsageStats,
     UpsertResult,
     BulkUpsertResult,
     SearchResult,
@@ -43,23 +46,32 @@ class CollectionsResource(_Resource):
         name: str,
         dim: int,
         distance_metric: str = "cosine",
+        description: str | None = None,
     ) -> Collection:
-        data = self._request("POST", "/v1/collections", json={
-            "name": name,
-            "dim": dim,
-            "distance_metric": distance_metric,
-        })
+        payload: dict[str, Any] = {"name": name, "dim": dim, "distance_metric": distance_metric}
+        if description is not None:
+            payload["description"] = description
+        data = self._request("POST", "/v1/collections", json=payload)
         return Collection.from_dict(data)
 
     def list(self) -> list[Collection]:
         data = self._request("GET", "/v1/collections")
-        # API returns {"collections": [...]}
         items = data.get("collections", data) if isinstance(data, dict) else data
         return [Collection.from_dict(c) for c in items]
 
     def get(self, name: str) -> Collection:
         data = self._request("GET", f"/v1/collections/{name}")
         return Collection.from_dict(data)
+
+    def update(self, name: str, description: str | None) -> Collection:
+        """Update a collection's description. Pass None to clear it."""
+        data = self._request("PATCH", f"/v1/collections/{name}", json={"description": description})
+        return Collection.from_dict(data)
+
+    def export(self, name: str, limit: int = 10000) -> ExportResult:
+        """Export all vectors in a collection as float lists."""
+        data = self._request("GET", f"/v1/collections/{name}/export", params={"limit": limit})
+        return ExportResult.from_dict(data)
 
     def delete(self, name: str) -> dict:
         return self._request("DELETE", f"/v1/collections/{name}")
@@ -199,6 +211,71 @@ class SearchResource(_Resource):
             json=payload,
         )
         return SearchResult.from_dict(data, collection=collection, k=k)
+
+
+class AdminKeysResource(_Resource):
+    """API key lifecycle management."""
+
+    def create(
+        self,
+        name: str,
+        role: str = "readwrite",
+        expires_in_days: int | None = None,
+    ) -> ApiKey:
+        payload: dict[str, Any] = {"name": name, "role": role}
+        if expires_in_days is not None:
+            payload["expires_in_days"] = expires_in_days
+        data = self._request("POST", "/v1/admin/keys", json=payload)
+        return ApiKey.from_dict(data)
+
+    def list(self) -> list[ApiKey]:
+        data = self._request("GET", "/v1/admin/keys")
+        return [ApiKey.from_dict(k) for k in data["keys"]]
+
+    def get(self, key_id: int) -> ApiKey:
+        data = self._request("GET", f"/v1/admin/keys/{key_id}")
+        return ApiKey.from_dict(data)
+
+    def update(
+        self,
+        key_id: int,
+        name: str | None = None,
+        role: str | None = None,
+        is_active: bool | None = None,
+    ) -> ApiKey:
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if role is not None:
+            payload["role"] = role
+        if is_active is not None:
+            payload["is_active"] = is_active
+        data = self._request("PATCH", f"/v1/admin/keys/{key_id}", json=payload)
+        return ApiKey.from_dict(data)
+
+    def revoke(self, key_id: int) -> ApiKey:
+        """Deactivate a key without deleting it."""
+        return self.update(key_id, is_active=False)
+
+    def restore(self, key_id: int) -> ApiKey:
+        """Re-activate a previously revoked key."""
+        return self.update(key_id, is_active=True)
+
+    def rotate(self, key_id: int) -> ApiKey:
+        """Regenerate the key value. Returns the new key value (shown once)."""
+        data = self._request("POST", f"/v1/admin/keys/{key_id}/rotate")
+        return ApiKey.from_dict(data)
+
+    def delete(self, key_id: int) -> dict:
+        return self._request("DELETE", f"/v1/admin/keys/{key_id}")
+
+    def get_usage(self, key_id: int) -> KeyUsageStats:
+        data = self._request("GET", f"/v1/admin/keys/{key_id}/usage")
+        return KeyUsageStats.from_dict(data)
+
+    def get_usage_summary(self) -> dict[str, Any]:
+        """Returns overall stats and per-key breakdown."""
+        return self._request("GET", "/v1/admin/keys/usage/summary")
 
 
 class ObservabilityResource(_Resource):

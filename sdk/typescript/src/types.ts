@@ -8,6 +8,7 @@ export interface Collection {
   distance_metric: string;
   vector_count: number;
   created_at?: string;
+  description?: string | null;
 }
 
 export interface UpsertResult {
@@ -29,6 +30,49 @@ export interface SearchResult {
   results: VectorResult[];
   collection: string;
   k: number;
+  total_count: number;
+  offset: number;
+}
+
+export interface ExportedVector {
+  external_id: string;
+  vector: number[];
+  metadata: Record<string, unknown>;
+}
+
+export interface ExportResult {
+  collection: string;
+  dim: number;
+  distance_metric: string;
+  count: number;
+  vectors: ExportedVector[];
+}
+
+export interface ApiKey {
+  id: number;
+  name: string;
+  role: string;
+  is_active: boolean;
+  created_at: string;
+  expires_at?: string | null;
+  last_used_at?: string | null;
+  key?: string; // only present at creation/rotation
+}
+
+export interface KeyUsageStats {
+  total_requests: number;
+  last_24h: number;
+  last_7d: number;
+  last_30d: number;
+  by_endpoint: Record<string, number>;
+  last_request_at?: string | null;
+  key_id?: number;
+  key_name?: string;
+}
+
+export interface UsageSummary {
+  overall: KeyUsageStats;
+  by_key: (KeyUsageStats & { key_name: string })[];
 }
 
 export interface HealthStats {

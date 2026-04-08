@@ -12,7 +12,12 @@ export {
 } from "./errors.js";
 
 export type {
+  ApiKey,
   Collection,
+  ExportedVector,
+  ExportResult,
+  KeyUsageStats,
+  UsageSummary,
   UpsertResult,
   BulkUpsertResult,
   VectorResult,

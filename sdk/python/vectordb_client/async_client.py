@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 
 from vectordb_client._async_resources import (
+    AsyncAdminKeysResource,
     AsyncCollectionsResource,
     AsyncVectorsResource,
     AsyncSearchResource,
@@ -42,6 +43,7 @@ class AsyncVectorDBClient:
         self.vectors: AsyncVectorsResource
         self.search: AsyncSearchResource
         self.observability: AsyncObservabilityResource
+        self.keys: AsyncAdminKeysResource
 
     def _init_resources(self) -> None:
         assert self._http is not None
@@ -49,6 +51,7 @@ class AsyncVectorDBClient:
         self.vectors = AsyncVectorsResource(self._http, self._base_url)
         self.search = AsyncSearchResource(self._http, self._base_url)
         self.observability = AsyncObservabilityResource(self._http, self._base_url)
+        self.keys = AsyncAdminKeysResource(self._http, self._base_url)
 
     async def __aenter__(self) -> "AsyncVectorDBClient":
         self._http = httpx.AsyncClient(

@@ -114,6 +114,11 @@ All endpoints (except `/`) require `x-api-key` header.
 
 ## Development Rules
 - **Every new feature or code change must have accompanying test cases.** No code is considered complete without tests that cover its functionality. Tests must pass before marking work as done.
+- **SDK sync rule:** Any new API endpoint, new request/response field, or changed behavior MUST be reflected in both SDKs before the work is considered done:
+  - Python SDK: `sdk/python/vectordb_client/` — update `_resources.py`, `_async_resources.py`, `models.py`, and bump version in `pyproject.toml` + `__init__.py`
+  - TypeScript SDK: `sdk/typescript/src/` — update `types.ts`, the relevant resource file under `resources/`, and bump version in `package.json`
+  - Add tests for new SDK methods in `tests/test_phase6_python_sdk.py` and `sdk/typescript/src/__tests__/`
+- **Frontend sync rule:** Any new API endpoint or changed behavior MUST be documented in `vector-db-web/CLAUDE.md` (Backend Changelog section) so the frontend Claude can implement it. Include: endpoint path, method, request body, response shape, and required UI changes.
 
 ## Running
 ```bash

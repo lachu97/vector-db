@@ -23,7 +23,11 @@ from vectordb_client.exceptions import (
     RateLimitError,
 )
 from vectordb_client.models import (
+    ApiKey,
     Collection,
+    ExportResult,
+    ExportedVector,
+    KeyUsageStats,
     VectorResult,
     SearchResult,
     UpsertResult,
@@ -31,7 +35,7 @@ from vectordb_client.models import (
     HealthStats,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = [
     "VectorDBClient",
     "AsyncVectorDBClient",
@@ -41,7 +45,11 @@ __all__ = [
     "DimensionMismatchError",
     "AuthenticationError",
     "RateLimitError",
+    "ApiKey",
     "Collection",
+    "ExportResult",
+    "ExportedVector",
+    "KeyUsageStats",
     "VectorResult",
     "SearchResult",
     "UpsertResult",

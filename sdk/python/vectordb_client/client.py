@@ -5,6 +5,7 @@ from __future__ import annotations
 import requests
 
 from vectordb_client._resources import (
+    AdminKeysResource,
     CollectionsResource,
     VectorsResource,
     SearchResource,
@@ -40,6 +41,7 @@ class VectorDBClient:
         self.vectors = VectorsResource(self._session, base_url)
         self.search = SearchResource(self._session, base_url)
         self.observability = ObservabilityResource(self._session, base_url)
+        self.keys = AdminKeysResource(self._session, base_url)
 
     def close(self) -> None:
         """Close the underlying HTTP session."""

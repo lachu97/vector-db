@@ -7,7 +7,10 @@ import httpx
 
 from vectordb_client._http import _raise_for_response, _unwrap
 from vectordb_client.models import (
+    ApiKey,
     Collection,
+    ExportResult,
+    KeyUsageStats,
     UpsertResult,
     BulkUpsertResult,
     SearchResult,
@@ -34,10 +37,17 @@ class _AsyncResource:
 
 
 class AsyncCollectionsResource(_AsyncResource):
-    async def create(self, name: str, dim: int, distance_metric: str = "cosine") -> Collection:
-        data = await self._request("POST", "/v1/collections", json={
-            "name": name, "dim": dim, "distance_metric": distance_metric,
-        })
+    async def create(
+        self,
+        name: str,
+        dim: int,
+        distance_metric: str = "cosine",
+        description: str | None = None,
+    ) -> Collection:
+        payload: dict[str, Any] = {"name": name, "dim": dim, "distance_metric": distance_metric}
+        if description is not None:
+            payload["description"] = description
+        data = await self._request("POST", "/v1/collections", json=payload)
         return Collection.from_dict(data)
 
     async def list(self) -> list[Collection]:
@@ -48,6 +58,16 @@ class AsyncCollectionsResource(_AsyncResource):
     async def get(self, name: str) -> Collection:
         data = await self._request("GET", f"/v1/collections/{name}")
         return Collection.from_dict(data)
+
+    async def update(self, name: str, description: str | None) -> Collection:
+        """Update a collection's description. Pass None to clear it."""
+        data = await self._request("PATCH", f"/v1/collections/{name}", json={"description": description})
+        return Collection.from_dict(data)
+
+    async def export(self, name: str, limit: int = 10000) -> ExportResult:
+        """Export all vectors in a collection as float lists."""
+        data = await self._request("GET", f"/v1/collections/{name}/export", params={"limit": limit})
+        return ExportResult.from_dict(data)
 
     async def delete(self, name: str) -> dict:
         return await self._request("DELETE", f"/v1/collections/{name}")
@@ -172,6 +192,67 @@ class AsyncSearchResource(_AsyncResource):
             json=payload,
         )
         return SearchResult.from_dict(data, collection=collection, k=k)
+
+
+class AsyncAdminKeysResource(_AsyncResource):
+    """API key lifecycle management."""
+
+    async def create(
+        self,
+        name: str,
+        role: str = "readwrite",
+        expires_in_days: int | None = None,
+    ) -> ApiKey:
+        payload: dict[str, Any] = {"name": name, "role": role}
+        if expires_in_days is not None:
+            payload["expires_in_days"] = expires_in_days
+        data = await self._request("POST", "/v1/admin/keys", json=payload)
+        return ApiKey.from_dict(data)
+
+    async def list(self) -> list[ApiKey]:
+        data = await self._request("GET", "/v1/admin/keys")
+        return [ApiKey.from_dict(k) for k in data["keys"]]
+
+    async def get(self, key_id: int) -> ApiKey:
+        data = await self._request("GET", f"/v1/admin/keys/{key_id}")
+        return ApiKey.from_dict(data)
+
+    async def update(
+        self,
+        key_id: int,
+        name: str | None = None,
+        role: str | None = None,
+        is_active: bool | None = None,
+    ) -> ApiKey:
+        payload: dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if role is not None:
+            payload["role"] = role
+        if is_active is not None:
+            payload["is_active"] = is_active
+        data = await self._request("PATCH", f"/v1/admin/keys/{key_id}", json=payload)
+        return ApiKey.from_dict(data)
+
+    async def revoke(self, key_id: int) -> ApiKey:
+        return await self.update(key_id, is_active=False)
+
+    async def restore(self, key_id: int) -> ApiKey:
+        return await self.update(key_id, is_active=True)
+
+    async def rotate(self, key_id: int) -> ApiKey:
+        data = await self._request("POST", f"/v1/admin/keys/{key_id}/rotate")
+        return ApiKey.from_dict(data)
+
+    async def delete(self, key_id: int) -> dict:
+        return await self._request("DELETE", f"/v1/admin/keys/{key_id}")
+
+    async def get_usage(self, key_id: int) -> KeyUsageStats:
+        data = await self._request("GET", f"/v1/admin/keys/{key_id}/usage")
+        return KeyUsageStats.from_dict(data)
+
+    async def get_usage_summary(self) -> dict[str, Any]:
+        return await self._request("GET", "/v1/admin/keys/usage/summary")
 
 
 class AsyncObservabilityResource(_AsyncResource):

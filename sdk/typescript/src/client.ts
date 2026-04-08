@@ -6,9 +6,11 @@
  *   await client.collections.create("my-col", 384, "cosine");
  *   await client.vectors.upsert("my-col", "doc-1", embeddingVector, { title: "Hello" });
  *   const results = await client.search.search("my-col", queryVector, { k: 5 });
+ *   const key = await client.keys.create("my-app", "readwrite");
  */
 
 import { HttpClient, type FetchFn } from "./http.js";
+import { AdminKeysResource } from "./resources/keys.js";
 import { CollectionsResource } from "./resources/collections.js";
 import { VectorsResource } from "./resources/vectors.js";
 import { SearchResource } from "./resources/search.js";
@@ -28,6 +30,7 @@ export class VectorDBClient {
   readonly vectors: VectorsResource;
   readonly search: SearchResource;
   readonly observability: ObservabilityResource;
+  readonly keys: AdminKeysResource;
 
   private readonly http: HttpClient;
 
@@ -37,6 +40,7 @@ export class VectorDBClient {
     this.vectors = new VectorsResource(this.http);
     this.search = new SearchResource(this.http);
     this.observability = new ObservabilityResource(this.http);
+    this.keys = new AdminKeysResource(this.http);
   }
 
   /** Returns true if the server is reachable. */
