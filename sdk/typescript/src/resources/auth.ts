@@ -23,16 +23,14 @@ export class AuthResource {
   /** Register a new user. Returns user info and an admin API key. */
   async register(email: string, password: string): Promise<AuthResponse> {
     return this.http.request("POST", "/v1/auth/register", {
-      email,
-      password,
+      body: { email, password },
     });
   }
 
   /** Login an existing user. Returns user info and an admin API key. */
   async login(email: string, password: string): Promise<AuthResponse> {
     return this.http.request("POST", "/v1/auth/login", {
-      email,
-      password,
+      body: { email, password },
     });
   }
 }
