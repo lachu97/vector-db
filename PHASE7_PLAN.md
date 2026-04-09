@@ -1,149 +1,197 @@
-# Phase 7: Cloud & Managed Service — Fly.io Plan
+# Phase 7: Cloud & Managed Service — Render Plan
 
-## Why Fly.io?
+## Why Render?
 
-Fly.io gives you most of what Kubernetes offers — auto-restart, scaling, load balancing, TLS, multi-region — without needing to learn K8s. You deploy with `fly deploy` (like `docker compose up` but in the cloud).
+Render is a PaaS that deploys straight from GitHub. Push to `main`, it builds and deploys automatically. No CLI needed, no YAML files, no K8s — just connect your repo and go.
 
-| Feature | Fly.io | Kubernetes |
-|---------|--------|-----------|
-| Deploy command | `fly deploy` | `helm upgrade` + 20 YAML files |
-| Auto TLS/SSL | Built-in, free | You configure Ingress + cert-manager |
-| Load balancing | Built-in | You configure Services + Ingress |
-| Auto-restart on crash | Built-in | Built-in |
-| Scaling | `fly scale count 3` | Edit Deployment replicas + HPA |
-| Managed Postgres | `fly postgres create` | You manage StatefulSet or pay for RDS |
-| Learning curve | Low (just a CLI) | High (weeks to learn) |
-| Cost to start | ~$10-20/mo | ~$70-150/mo |
-| When to outgrow | 100+ machines, complex networking | N/A (it's the destination) |
+| Feature | Render | Fly.io | Kubernetes |
+|---------|--------|--------|-----------|
+| Deploy | Git push (auto) | `fly deploy` | `helm upgrade` + YAML |
+| Auto TLS | Built-in | Built-in | Manual (cert-manager) |
+| Managed Postgres | Yes (free tier available) | Yes | No (you manage it) |
+| Managed Redis | Yes (free tier available) | Via Upstash addon | No |
+| Dashboard | Web UI | CLI-first | CLI + dashboards |
+| Auto-deploy from GitHub | Native | Via GitHub Actions | Via GitHub Actions |
+| Free tier | Yes (750 hrs/mo) | No | No |
+| Learning curve | Very low | Low | High |
+| Cost to start | **$0 (free tier)** | ~$17/mo | ~$70/mo |
 
-**Bottom line:** Start on Fly.io now, migrate to K8s only if/when you outgrow it (likely not for a long time).
+**Bottom line:** Render is the simplest path. Connect repo, set env vars, done. Migrate to something heavier only when you outgrow it.
 
 ---
 
-## Architecture on Fly.io
+## Architecture on Render
 
 ```
 Internet
    |
-   +--> api.yourvectordb.com -----> [Fly Machine: vectordb-api] x2
-   |                                        |
-   +--> app.yourvectordb.com -----> [Fly Machine: vectordb-web] x1
-                                            |
-                              +-------------+-------------+
-                              |                           |
-                     [Fly Postgres cluster]        [Fly Redis (Upstash)]
-                      (automatic failover)          (managed, free tier)
+   +--> api.yourvectordb.com ------> [Web Service: vectordb-api]
+   |                                          |
+   +--> app.yourvectordb.com ------> [Static Site or Web Service: vectordb-web]
+                                              |
+                                +-------------+-------------+
+                                |                           |
+                       [Render Postgres]            [Render Redis]
+                        (managed, auto-backup)       (managed, free tier)
 ```
 
-### Fly.io Concepts You Need
+### Render Concepts
 
 | Concept | What It Is | VectorDB Usage |
 |---------|-----------|---------------|
-| **Machine** | A lightweight VM running your Docker image. Like a container but with its own IP. | One instance of your API |
-| **App** | A group of machines behind one hostname. Fly load-balances across them. | `vectordb-api` app, `vectordb-web` app |
-| **fly.toml** | Config file (like docker-compose.yml). Defines how to build, run, scale, health-check. | One per app |
-| **Volume** | Persistent disk attached to a machine. Survives restarts. | Only needed if using SQLite (not for Postgres backend) |
-| **Secrets** | Encrypted env vars. Set via `fly secrets set DB_URL=...` | Database URL, Redis URL, API key |
-| **Regions** | Fly runs your app in specific data centers worldwide. | Start with one region (e.g., `iad` for US East) |
+| **Web Service** | A long-running process serving HTTP. Built from a Dockerfile or buildpack. Auto-deployed on git push. | Your FastAPI API |
+| **Static Site** | Pre-built frontend served from CDN. Free. | Next.js dashboard (if exported static) |
+| **PostgreSQL** | Managed Postgres instance with automatic daily backups. Free tier: 256MB, 90-day expiry. | Production database with pgvector |
+| **Redis** | Managed Redis. Free tier: 25MB. | Embedding + query cache |
+| **Environment Groups** | Shared env vars across services. Set once, used by all. | `DB_URL`, `REDIS_URL` shared between API + workers |
+| **Blueprints** | `render.yaml` — Infrastructure as Code. Defines all services in one file. | One-click deploy of entire stack |
+| **Health Checks** | Render pings your app. If it fails, it restarts. | `GET /v1/health` |
 
 ---
 
 ## Cost Breakdown
 
-### Starter (handles free + early pro tiers)
+### Starter — Free Tier (0-20 users)
 
 | Component | Spec | Cost |
 |-----------|------|------|
-| API machines (2x) | shared-cpu-1x, 512MB RAM | ~$7/mo total |
-| Web machine (1x) | shared-cpu-1x, 256MB RAM | ~$3/mo |
-| Fly Postgres | 1 shared-cpu, 1GB RAM, 10GB disk | ~$7/mo |
-| Upstash Redis (Fly addon) | Free tier (10k cmds/day) | $0 |
-| **Total** | | **~$17/mo** |
+| API (Web Service) | Free tier, 512MB RAM, spins down after 15 min inactivity | $0 |
+| Postgres | Free tier, 256MB, 1GB storage | $0 |
+| Redis | Free tier, 25MB | $0 |
+| Frontend (Static Site) | Free, CDN | $0 |
+| **Total** | | **$0/mo** |
 
-### Growth (50+ users, pro tiers)
+**Limitations:** Free tier spins down after inactivity (cold starts ~30-60s). Postgres expires after 90 days (must recreate or upgrade). Fine for development and early beta users.
 
-| Component | Spec | Cost |
-|-----------|------|------|
-| API machines (3x) | shared-cpu-2x, 1GB RAM | ~$20/mo |
-| Web machine (1x) | shared-cpu-1x, 512MB RAM | ~$4/mo |
-| Fly Postgres | 1 dedicated-cpu, 2GB RAM, 20GB disk | ~$30/mo |
-| Upstash Redis | Pay-as-you-go ($0.2/100k cmds) | ~$5/mo |
-| **Total** | | **~$59/mo** |
-
-### Scale (500+ users)
+### Growth — Paid Tier (20-500 users): ~$26/mo
 
 | Component | Spec | Cost |
 |-----------|------|------|
-| API machines (5x) | dedicated-cpu-2x, 4GB RAM | ~$150/mo |
-| Web machine (2x) | shared-cpu-2x, 1GB RAM | ~$14/mo |
-| Fly Postgres (HA) | 2 nodes, dedicated-cpu, 4GB, 50GB disk | ~$100/mo |
-| Upstash Redis Pro | | ~$10/mo |
-| **Total** | | **~$274/mo** |
+| API (Web Service) | Starter plan, 512MB RAM, always on | $7/mo |
+| Postgres | Starter plan, 1GB RAM, 1GB storage, daily backups | $7/mo |
+| Redis | Starter plan, 25MB, persistence | $5/mo |
+| Frontend (Static Site) | Free | $0 |
+| **Total** | | **~$19/mo** |
+
+### Scale (500+ users): ~$85/mo
+
+| Component | Spec | Cost |
+|-----------|------|------|
+| API (Web Service) | Standard plan, 2GB RAM | $25/mo |
+| Postgres | Standard plan, 4GB RAM, 10GB storage, PITR | $45/mo |
+| Redis | Standard plan, 100MB | $10/mo |
+| Frontend (Static Site) | Free | $0 |
+| Extra API instance | +1 instance for HA | $25/mo |
+| **Total** | | **~$105/mo** |
 
 ---
 
 ## Sub-Phases and Timeline
 
-### Sub-Phase 7.1: Deploy to Fly.io (Week 1)
+### Sub-Phase 7.1: Deploy to Render (Week 1)
 
-**Goal:** Get the API + Postgres + Redis running on Fly.io.
+**Goal:** API + Postgres + Redis live on Render, auto-deploying from GitHub.
 
 **Steps:**
-1. Install Fly CLI: `curl -L https://fly.io/install.sh | sh`
-2. Login: `fly auth login`
-3. Create Postgres: `fly postgres create --name vectordb-db --region iad`
-4. Create Redis (Upstash): `fly redis create --name vectordb-redis --region iad`
-5. Create API app: `fly launch` (generates `fly.toml`)
-6. Set secrets: `fly secrets set DB_URL=... REDIS_URL=... API_KEY=...`
-7. Deploy: `fly deploy`
-8. Attach custom domain + auto-TLS
+
+1. **Create `render.yaml`** (Blueprint) at repo root — defines all services
+2. **Go to Render Dashboard** → New → Blueprint → Connect GitHub repo
+3. Render reads `render.yaml`, creates all services automatically
+4. **Set secrets** in Render Dashboard (or via `render.yaml` `envVars`)
+5. API is live at `vectordb-api.onrender.com` with auto-TLS
+6. Attach custom domain later
 
 **Files to create:**
+
 | File | Purpose |
 |------|---------|
-| `fly.toml` | API app config — build, env, services, health checks, scaling |
-| `Dockerfile` (modify) | Multi-stage build for smaller image |
-| `.dockerignore` (modify) | Exclude tests, docs, SDKs from image |
+| `render.yaml` | Blueprint — defines API service, Postgres, Redis |
+| `Dockerfile` (modify) | Multi-stage build for smaller/faster image |
+| `.dockerignore` (modify) | Exclude tests, docs, SDKs, .git |
+| `scripts/migrate.sh` (new) | Run Alembic migrations on deploy |
 
-**`fly.toml` will look like:**
-```toml
-app = "vectordb-api"
-primary_region = "iad"
+**`render.yaml`:**
+```yaml
+databases:
+  - name: vectordb-db
+    plan: free       # upgrade to starter ($7/mo) for production
+    databaseName: vectordb
+    user: vectordb
+    postgresSQLMajorVersion: "16"
+    ipAllowList: []  # only internal access
 
-[build]
-  dockerfile = "Dockerfile"
+services:
+  - type: redis
+    name: vectordb-redis
+    plan: free       # upgrade to starter ($5/mo) for persistence
+    ipAllowList: []
 
-[env]
-  STORAGE_BACKEND = "postgres"
-  LOG_FORMAT = "json"
-  WORKERS = "2"
-  PORT = "8000"
-  EMBEDDING_PROVIDER = "sentence-transformers"
+  - type: web
+    name: vectordb-api
+    runtime: docker
+    plan: free       # upgrade to starter ($7/mo) to stay always-on
+    region: ohio
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: STORAGE_BACKEND
+        value: postgres
+      - key: EMBEDDING_PROVIDER
+        value: sentence-transformers
+      - key: LOG_FORMAT
+        value: json
+      - key: WORKERS
+        value: "2"
+      - key: PORT
+        value: "8000"
+      - key: DB_URL
+        fromDatabase:
+          name: vectordb-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: vectordb-redis
+          type: redis
+          property: connectionString
+      - key: API_KEY
+        generateValue: true   # Render generates a random value
+```
 
-[http_service]
-  internal_port = 8000
-  force_https = true
-  auto_stop_machines = false
-  auto_start_machines = true
-  min_machines_running = 1
+**Dockerfile update (multi-stage):**
+```dockerfile
+# ---------- Builder ----------
+FROM python:3.13-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential gcc libpq-dev && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
-  [http_service.concurrency]
-    type = "requests"
-    hard_limit = 250
-    soft_limit = 200
+# ---------- Runtime ----------
+FROM python:3.13-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 curl && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /install /usr/local
+COPY vectordb/ vectordb/
+COPY main.py alembic.ini ./
+COPY migrations/ migrations/
 
-[[http_service.checks]]
-  grace_period = "10s"
-  interval = "30s"
-  method = "GET"
-  timeout = "5s"
-  path = "/v1/health"
-  headers = {"x-api-key" = "your-bootstrap-key"}
+RUN useradd -m appuser
+USER appuser
 
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
-  count = 2
+ENV PYTHONUNBUFFERED=1 PORT=8000 WORKERS=2
+
+EXPOSE ${PORT}
+
+# Run migrations then start server
+CMD sh -c "python -m alembic upgrade head && \
+    gunicorn main:app \
+    --workers ${WORKERS} \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:${PORT} \
+    --log-level info \
+    --timeout 120"
 ```
 
 ### Sub-Phase 7.2: Tier System (Weeks 2-3)
@@ -164,42 +212,41 @@ primary_region = "iad"
 | Backups | None | Daily | Hourly + PITR |
 
 **Files to create/modify:**
+
 | File | Change |
 |------|--------|
-| `vectordb/tiers.py` (new) | `TIER_LIMITS` dict |
-| `vectordb/services/usage_service.py` (new) | Track per-tenant usage |
-| `vectordb/routers/billing.py` (new) | `GET /v1/usage`, `GET /v1/plan` |
-| `vectordb/models/db.py` (modify) | Add `tier` to User, `TenantUsage` model |
+| `vectordb/tiers.py` (new) | `TIER_LIMITS` dict with free/pro/scale definitions |
+| `vectordb/services/usage_service.py` (new) | Track per-tenant usage (API calls, vectors, storage) |
+| `vectordb/routers/billing.py` (new) | `GET /v1/usage`, `GET /v1/plan` endpoints |
+| `vectordb/models/db.py` (modify) | Add `tier` to User, add `TenantUsage` model |
 | `vectordb/auth.py` (modify) | Include `tier` in `ApiKeyInfo` |
 | `vectordb/middleware.py` (modify) | Per-tier rate limits instead of global |
+| `vectordb/app.py` (modify) | Register billing router |
 
-**Implementation:**
-1. Add `tier` column to `User` (default: `"free"`)
-2. Create `TIER_LIMITS` dict
-3. Modify rate limiter to use per-tier RPM
-4. Add pre-write checks in routers (collection count, vector count at limit?)
-5. Add `TenantUsage` table — monthly counters for API calls, vectors, storage
-6. Expose `GET /v1/usage` and `GET /v1/plan`
-7. Start with manual tier assignment via admin endpoint; add Stripe later
+**Implementation order:**
+1. Add `tier` column to `User` model (default: `"free"`)
+2. Create Alembic migration for the new column
+3. Create `TIER_LIMITS` dict in `vectordb/tiers.py`
+4. Modify `RateLimitMiddleware` to use per-tier RPM from `ApiKeyInfo`
+5. Add pre-write checks in routers (collection count limit, vector count limit)
+6. Add `TenantUsage` model + monthly aggregation
+7. Create `GET /v1/usage` and `GET /v1/plan` endpoints
+8. Manual tier assignment first; Stripe integration later
 
 ### Sub-Phase 7.3: CI/CD Pipeline (Week 4)
 
-**Goal:** Push to `main` auto-deploys.
+**Goal:** Auto-deploy on push to `main` with tests.
 
-Fly.io has native GitHub Actions integration. The pipeline:
+Render already auto-deploys on git push. We just need to add a test gate so broken code doesn't deploy.
 
-```
-Push to main → Run tests → Build + Deploy to staging
-Tag v*.*.* → Run tests → Build + Deploy to production
-```
-
-**File: `.github/workflows/fly-deploy.yml`**
+**File: `.github/workflows/ci.yml`**
 ```yaml
-name: Deploy to Fly.io
+name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
+  pull_request:
+    branches: [main]
 
 jobs:
   test:
@@ -211,6 +258,11 @@ jobs:
           POSTGRES_PASSWORD: test
           POSTGRES_DB: vectordb_test
         ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -221,48 +273,28 @@ jobs:
         env:
           EMBEDDING_PROVIDER: dummy
           API_KEY: test-key
-
-  deploy-staging:
-    needs: test
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --app vectordb-api-staging
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-
-  deploy-production:
-    needs: test
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - run: flyctl deploy --app vectordb-api
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 ```
 
-**GitHub Secrets needed:**
-| Secret | How to get |
-|--------|-----------|
-| `FLY_API_TOKEN` | `fly tokens create deploy -x 999999h` |
+**Deploy flow:**
+```
+PR opened → GitHub Actions runs tests
+PR merged to main → GitHub Actions runs tests → Render auto-deploys
+```
+
+To prevent Render from deploying if tests fail, set the **Build Filter** in Render Dashboard to check the CI status, OR use Render's **Deploy Hook** triggered only after CI passes.
 
 ### Sub-Phase 7.4: Backup & DR (Week 5)
 
 **Goal:** Automated backups with tested restore.
 
-**Fly Postgres handles most of this:**
-- Automatic daily snapshots (retained 7 days)
-- WAL-based point-in-time recovery
-- `fly postgres backup list` to see backups
-- `fly postgres backup restore` to restore
+**Render Postgres backups (built-in):**
+- **Free tier:** No backups (data can be lost on expire)
+- **Starter ($7/mo):** Automatic daily backups, 7-day retention
+- **Standard ($45/mo):** Automatic daily backups + point-in-time recovery (PITR)
 
-**For extra safety (off-platform backup):**
-- Weekly `pg_dump` to an S3 bucket via GitHub Actions scheduled workflow
-- Retained 30 days
+**For extra safety — off-platform backup:**
+
+Weekly `pg_dump` to an S3 bucket via GitHub Actions:
 
 **File: `.github/workflows/backup.yml`**
 ```yaml
@@ -270,32 +302,40 @@ name: Weekly Database Backup
 on:
   schedule:
     - cron: '0 3 * * 0'  # Sunday 3am UTC
-  workflow_dispatch:       # manual trigger
+  workflow_dispatch:
 
 jobs:
   backup:
     runs-on: ubuntu-latest
     steps:
-      - name: Install Fly CLI
-        uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: Create backup
-        run: |
-          flyctl ssh console --app vectordb-db -C "pg_dump -Fc -U postgres vectordb" > backup.dump
-          aws s3 cp backup.dump s3://vectordb-backups/$(date +%Y-%m-%d).dump
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client-16
+
+      - name: Dump database
+        run: pg_dump -Fc "$DB_URL" > backup.dump
         env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          DB_URL: ${{ secrets.RENDER_DB_EXTERNAL_URL }}
+
+      - name: Upload to S3
+        uses: jakejarvis/s3-sync-action@master
+        with:
+          args: --include "backup.dump"
+        env:
+          AWS_S3_BUCKET: ${{ secrets.BACKUP_S3_BUCKET }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          SOURCE_DIR: '.'
+          DEST_DIR: 'vectordb-backups/${{ github.run_id }}'
 ```
 
-**Recovery scenarios on Fly:**
+**Recovery scenarios:**
 
 | Scenario | What happens | Recovery |
 |----------|-------------|---------|
-| Machine crash | Fly auto-restarts it in ~5 seconds | Automatic |
-| Bad deploy | `fly releases rollback` | One command, <1 min |
-| Postgres data loss | `fly postgres backup restore` | 5-15 min |
-| Total Fly outage | Restore pg_dump to any Postgres instance | 30 min |
+| API crash | Render auto-restarts | Automatic, ~10s |
+| Bad deploy | Render → Manual Deploy → pick previous commit | 1-click, <2 min |
+| Postgres issue | Restore from Render daily backup | Dashboard, 5-15 min |
+| Need to migrate away | `pg_dump` from external URL, restore anywhere | 30 min |
 
 ### Sub-Phase 7.5: Tenant Isolation (Week 6)
 
@@ -304,44 +344,95 @@ jobs:
 - Rate limiting (global)
 
 **Still needed:**
+
 | What | How | Priority |
 |------|-----|----------|
-| Per-tier rate limits | Modify `middleware.py` to read `tier` from `ApiKeyInfo` | High |
-| Per-tier query timeouts | Set `statement_timeout` per tier on DB connections | Medium |
+| Per-tier rate limits | Modify `middleware.py` — read `tier` from `ApiKeyInfo` | High |
+| Per-tier query timeouts | `statement_timeout` per tier on DB connections | Medium |
 | Per-tier connection pool | Limit concurrent DB connections per tier | Medium |
-| Resource isolation | Fly machines already isolated (each is a microVM) | Done by default |
+
+Render provides process-level isolation by default (each web service runs in its own container). No extra work needed for compute isolation.
 
 ### Sub-Phase 7.6: Frontend Deploy (Week 6)
 
-Deploy the dashboard (vector-db-web) as a separate Fly app:
+Deploy the dashboard as a separate Render service.
 
-```bash
-cd vector-db-web
-fly launch --name vectordb-web
-fly deploy
+**Option A: Static Site (free, fastest)**
+If `vector-db-web` can be exported as static (`next build && next export`):
+- Render → New → Static Site → Connect `vector-db-web` repo
+- Build command: `npm run build`
+- Publish directory: `out/`
+- Free, served from CDN
+
+**Option B: Web Service (if SSR needed)**
+- Render → New → Web Service → Connect repo
+- Build command: `npm install && npm run build`
+- Start command: `npm start`
+- Starter plan: $7/mo
+
+Add to `render.yaml`:
+```yaml
+  - type: web
+    name: vectordb-web
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://vectordb-api.onrender.com
 ```
 
-**File: `vector-db-web/fly.toml`**
-```toml
-app = "vectordb-web"
-primary_region = "iad"
+---
 
-[build]
-  dockerfile = "Dockerfile"
+## Complete `render.yaml` Blueprint
 
-[env]
-  NEXT_PUBLIC_API_URL = "https://vectordb-api.fly.dev"
+```yaml
+databases:
+  - name: vectordb-db
+    plan: free
+    databaseName: vectordb
+    user: vectordb
+    postgresSQLMajorVersion: "16"
+    ipAllowList: []
 
-[http_service]
-  internal_port = 3000
-  force_https = true
-  auto_stop_machines = true
-  auto_start_machines = true
-  min_machines_running = 1
+services:
+  - type: redis
+    name: vectordb-redis
+    plan: free
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: []
 
-[[vm]]
-  size = "shared-cpu-1x"
-  memory = "256mb"
+  - type: web
+    name: vectordb-api
+    runtime: docker
+    plan: free
+    region: ohio
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: STORAGE_BACKEND
+        value: postgres
+      - key: EMBEDDING_PROVIDER
+        value: sentence-transformers
+      - key: LOG_FORMAT
+        value: json
+      - key: WORKERS
+        value: "2"
+      - key: PORT
+        value: "8000"
+      - key: DB_URL
+        fromDatabase:
+          name: vectordb-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: vectordb-redis
+          type: redis
+          property: connectionString
+      - key: API_KEY
+        generateValue: true
 ```
 
 ---
@@ -352,11 +443,11 @@ primary_region = "iad"
 
 | File | Purpose |
 |------|---------|
-| `fly.toml` | Fly.io API app config |
-| `vectordb/tiers.py` | Tier definitions + limits |
+| `render.yaml` | Render Blueprint — one-click deploy of entire stack |
+| `vectordb/tiers.py` | Tier definitions + limits (free/pro/scale) |
 | `vectordb/services/usage_service.py` | Per-tenant usage tracking |
 | `vectordb/routers/billing.py` | `GET /v1/usage`, `GET /v1/plan` endpoints |
-| `.github/workflows/fly-deploy.yml` | CI/CD: test -> deploy |
+| `.github/workflows/ci.yml` | Test on push/PR |
 | `.github/workflows/backup.yml` | Weekly off-platform DB backup |
 
 ### Modified Files
@@ -372,72 +463,63 @@ primary_region = "iad"
 
 ---
 
-## Scaling Strategy on Fly.io
+## Scaling on Render
 
-### Day 1 (0-50 users): ~$17/mo
-```bash
-fly scale count 2 --app vectordb-api           # 2 API machines
-fly scale vm shared-cpu-1x --memory 512        # 512MB each
-```
+### Day 1 (free tier, dev/beta): $0/mo
+- Free web service (spins down on idle)
+- Free Postgres (256MB, 90-day limit)
+- Free Redis (25MB)
+- Free static site for frontend
 
-### Growth (50-500 users): ~$59/mo
-```bash
-fly scale count 3 --app vectordb-api
-fly scale vm shared-cpu-2x --memory 1024
-fly postgres update --app vectordb-db          # upgrade Postgres
-```
+### Growth (paying users): ~$19/mo
+- Starter web service ($7) — always on, no cold starts
+- Starter Postgres ($7) — daily backups, no expiry
+- Starter Redis ($5) — persistence
 
-### Scale (500+ users): ~$274/mo
-```bash
-fly scale count 5 --app vectordb-api
-fly scale vm dedicated-cpu-2x --memory 4096
-# Add multi-region
-fly regions add lhr sin --app vectordb-api     # London + Singapore
-```
+### Scale (500+ users): ~$105/mo
+- Standard web service ($25) — 2GB RAM
+- Standard Postgres ($45) — 4GB RAM, PITR
+- Standard Redis ($10) — 100MB
+- +1 API instance ($25) for high availability
 
-### When to leave Fly.io for K8s
-- You need 50+ machines
-- You need custom networking (VPN, VPC peering)
-- Enterprise customers require specific cloud certifications
-- You need GPUs for embedding (Fly doesn't support GPUs yet)
+### When to leave Render
+- You need auto-scaling (Render doesn't auto-scale — you manually add instances)
+- You need multi-region (Render is single-region per service)
+- You need >10 instances of the same service
+- Enterprise customers require VPC/private networking
 
-Until then, Fly.io handles everything.
+At that point, move to Fly.io or Kubernetes. The app code doesn't change — just the deployment config.
 
 ---
 
 ## Quick Start (This Weekend)
 
-```bash
-# 1. Install Fly CLI
-curl -L https://fly.io/install.sh | sh
-fly auth login
+### Option A: One-Click Blueprint (Easiest)
 
-# 2. Create Postgres
-fly postgres create --name vectordb-db --region iad --vm-size shared-cpu-1x
+1. Push `render.yaml` to your repo
+2. Go to https://dashboard.render.com → New → Blueprint
+3. Connect your `lachu97/vector-db` GitHub repo
+4. Render creates Postgres, Redis, and API automatically
+5. API is live at `https://vectordb-api.onrender.com`
+6. Set custom domain in Render Dashboard → auto-TLS
 
-# 3. Create Redis (Upstash)
-fly redis create --name vectordb-redis --region iad --no-eviction
+### Option B: Manual Setup
 
-# 4. Launch the API
-cd vector-db-mvp
-fly launch --name vectordb-api --region iad --no-deploy
-
-# 5. Attach Postgres + set secrets
-fly postgres attach vectordb-db --app vectordb-api
-fly secrets set \
-  STORAGE_BACKEND=postgres \
-  EMBEDDING_PROVIDER=sentence-transformers \
-  API_KEY=your-secure-bootstrap-key \
-  --app vectordb-api
-
-# 6. Deploy
-fly deploy
-
-# 7. Check it's running
-curl https://vectordb-api.fly.dev/v1/health -H "x-api-key: your-key"
-
-# 8. Scale to 2 machines
-fly scale count 2 --app vectordb-api
+```
+1. Render Dashboard → New PostgreSQL → name: vectordb-db → Create
+2. Render Dashboard → New Redis → name: vectordb-redis → Create
+3. Render Dashboard → New Web Service → Connect GitHub repo
+   - Name: vectordb-api
+   - Runtime: Docker
+   - Add env vars:
+     STORAGE_BACKEND=postgres
+     EMBEDDING_PROVIDER=sentence-transformers
+     DB_URL=(copy Internal Connection String from Postgres)
+     REDIS_URL=(copy Internal Connection String from Redis)
+     API_KEY=your-secure-key
+   - Create Web Service
+4. Wait for build + deploy (~3-5 min)
+5. Visit https://vectordb-api.onrender.com/v1/health
 ```
 
-**Total time: ~30 minutes. Total cost: ~$17/month.**
+**Total time: ~15 minutes. Total cost: $0.**
