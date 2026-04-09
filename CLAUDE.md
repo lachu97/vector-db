@@ -213,7 +213,7 @@ alembic downgrade -1
 - [x] Python SDK (`sdk/python/vectordb_client`) — sync + async clients, full API coverage, 38 tests
 - [x] TypeScript SDK (`sdk/typescript/src`) — `VectorDBClient` with full API coverage, 49 Jest tests
 - [x] CLI tool (`sdk/python/vectordb_client/cli/`) — `vdb` command, 46 tests
-- [ ] Admin dashboard UI (React/Next.js)
+- [x] Admin dashboard UI (React/Next.js) — `vector-db-web`
 - [x] Documentation site (`docs/`) — Mintlify, 30 pages, full API reference + OpenAPI spec
 
 ### Phase 7: Cloud & Managed Service
