@@ -1,195 +1,156 @@
-# Phase 7: Cloud & Managed Service — Implementation Plan
+# Phase 7: Cloud & Managed Service — Fly.io Plan
 
-## Part 1: Kubernetes Explained (for a Docker User)
+## Why Fly.io?
 
-### What Is Kubernetes and Why Do You Need It?
+Fly.io gives you most of what Kubernetes offers — auto-restart, scaling, load balancing, TLS, multi-region — without needing to learn K8s. You deploy with `fly deploy` (like `docker compose up` but in the cloud).
 
-You already know Docker: it packages your app into a container image and `docker compose up` runs everything on one machine. That works fine for local dev and even for a single production server. The problem comes when your managed service needs to:
+| Feature | Fly.io | Kubernetes |
+|---------|--------|-----------|
+| Deploy command | `fly deploy` | `helm upgrade` + 20 YAML files |
+| Auto TLS/SSL | Built-in, free | You configure Ingress + cert-manager |
+| Load balancing | Built-in | You configure Services + Ingress |
+| Auto-restart on crash | Built-in | Built-in |
+| Scaling | `fly scale count 3` | Edit Deployment replicas + HPA |
+| Managed Postgres | `fly postgres create` | You manage StatefulSet or pay for RDS |
+| Learning curve | Low (just a CLI) | High (weeks to learn) |
+| Cost to start | ~$10-20/mo | ~$70-150/mo |
+| When to outgrow | 100+ machines, complex networking | N/A (it's the destination) |
 
-- **Run multiple copies** of the API behind a load balancer
-- **Automatically restart** crashed containers and move workloads to healthy machines
-- **Scale up during traffic spikes** and scale down at night to save money
-- **Roll out new versions** with zero downtime (one pod at a time, rolling update)
-- **Isolate tenants** with resource limits (CPU, memory quotas per tier)
-- **Manage secrets** (database passwords, API keys) without baking them into images
-- **Persist data** (PostgreSQL volumes) reliably across container restarts
+**Bottom line:** Start on Fly.io now, migrate to K8s only if/when you outgrow it (likely not for a long time).
 
-Kubernetes (K8s) is the orchestrator that handles all of this across a cluster of machines. Think of it as **"Docker Compose for production at scale."**
+---
 
-### Key Kubernetes Concepts
-
-| Concept | What It Is | VectorDB Example |
-|---------|-----------|-----------------|
-| **Pod** | Smallest unit. Usually one container. Like a running Docker container, but managed by K8s. | One running instance of the VectorDB API |
-| **Deployment** | Declares "I want N copies of this pod running." K8s keeps that promise. | `vectordb-api` Deployment with `replicas: 3` |
-| **Service** | A stable internal DNS name + load balancer in front of pods. | `vectordb-api-service` so other pods reach `http://vectordb-api-service:8000` |
-| **Ingress** | Routes external HTTP traffic to Services inside the cluster. Handles TLS/SSL. | `api.yourvectordb.com` -> API Service |
-| **Namespace** | A virtual cluster boundary. Groups resources and applies policies. | `vectordb-prod`, `vectordb-staging` |
-| **PVC** | Persistent Volume Claim. Disk storage that survives pod restarts. | PostgreSQL data directory |
-| **ConfigMap** | Key-value config injected as env vars. Not secret. | `STORAGE_BACKEND=postgres`, `LOG_FORMAT=json` |
-| **Secret** | Like ConfigMap but encrypted at rest. For sensitive values. | Database password, Redis password |
-| **HPA** | Horizontal Pod Autoscaler. Watches CPU/memory and auto-scales replicas. | "If API pods avg >70% CPU, add more (up to 10)" |
-| **Helm Chart** | Package manager for K8s. Bundles all YAML into a reusable template. | `helm install vectordb` deploys everything |
-
-### The Mental Model
+## Architecture on Fly.io
 
 ```
 Internet
    |
-   v
-[Ingress] -- routes by hostname/path
-   |
-   +---> [Service: vectordb-api] --> [Pod] [Pod] [Pod]  (FastAPI app)
-   |
-   +---> [Service: vectordb-web] --> [Pod]               (Next.js dashboard)
-   
-Internal only (no Ingress):
-   [Service: postgresql] --> [Pod + PVC]                  (database)
-   [Service: redis]      --> [Pod]                        (cache)
+   +--> api.yourvectordb.com -----> [Fly Machine: vectordb-api] x2
+   |                                        |
+   +--> app.yourvectordb.com -----> [Fly Machine: vectordb-web] x1
+                                            |
+                              +-------------+-------------+
+                              |                           |
+                     [Fly Postgres cluster]        [Fly Redis (Upstash)]
+                      (automatic failover)          (managed, free tier)
 ```
+
+### Fly.io Concepts You Need
+
+| Concept | What It Is | VectorDB Usage |
+|---------|-----------|---------------|
+| **Machine** | A lightweight VM running your Docker image. Like a container but with its own IP. | One instance of your API |
+| **App** | A group of machines behind one hostname. Fly load-balances across them. | `vectordb-api` app, `vectordb-web` app |
+| **fly.toml** | Config file (like docker-compose.yml). Defines how to build, run, scale, health-check. | One per app |
+| **Volume** | Persistent disk attached to a machine. Survives restarts. | Only needed if using SQLite (not for Postgres backend) |
+| **Secrets** | Encrypted env vars. Set via `fly secrets set DB_URL=...` | Database URL, Redis URL, API key |
+| **Regions** | Fly runs your app in specific data centers worldwide. | Start with one region (e.g., `iad` for US East) |
 
 ---
 
-## Part 2: Sub-Phases and Milestones
+## Cost Breakdown
 
-### Sub-Phase 7.1: Production-Ready Docker (Weeks 1-2)
+### Starter (handles free + early pro tiers)
 
-**Goal:** Deploy to a single cloud VM with proper config, before touching K8s.
+| Component | Spec | Cost |
+|-----------|------|------|
+| API machines (2x) | shared-cpu-1x, 512MB RAM | ~$7/mo total |
+| Web machine (1x) | shared-cpu-1x, 256MB RAM | ~$3/mo |
+| Fly Postgres | 1 shared-cpu, 1GB RAM, 10GB disk | ~$7/mo |
+| Upstash Redis (Fly addon) | Free tier (10k cmds/day) | $0 |
+| **Total** | | **~$17/mo** |
 
-**Why:** You can start serving paid customers on a $20/month VM while building K8s in parallel.
+### Growth (50+ users, pro tiers)
 
-- Multi-stage Dockerfile (build + slim runtime)
-- `docker-compose.prod.yml` with PostgreSQL + Redis + API + frontend
-- Environment-based tier configuration
-- Health checks validated
-- Auto-run migrations on startup
+| Component | Spec | Cost |
+|-----------|------|------|
+| API machines (3x) | shared-cpu-2x, 1GB RAM | ~$20/mo |
+| Web machine (1x) | shared-cpu-1x, 512MB RAM | ~$4/mo |
+| Fly Postgres | 1 dedicated-cpu, 2GB RAM, 20GB disk | ~$30/mo |
+| Upstash Redis | Pay-as-you-go ($0.2/100k cmds) | ~$5/mo |
+| **Total** | | **~$59/mo** |
+
+### Scale (500+ users)
+
+| Component | Spec | Cost |
+|-----------|------|------|
+| API machines (5x) | dedicated-cpu-2x, 4GB RAM | ~$150/mo |
+| Web machine (2x) | shared-cpu-2x, 1GB RAM | ~$14/mo |
+| Fly Postgres (HA) | 2 nodes, dedicated-cpu, 4GB, 50GB disk | ~$100/mo |
+| Upstash Redis Pro | | ~$10/mo |
+| **Total** | | **~$274/mo** |
+
+---
+
+## Sub-Phases and Timeline
+
+### Sub-Phase 7.1: Deploy to Fly.io (Week 1)
+
+**Goal:** Get the API + Postgres + Redis running on Fly.io.
+
+**Steps:**
+1. Install Fly CLI: `curl -L https://fly.io/install.sh | sh`
+2. Login: `fly auth login`
+3. Create Postgres: `fly postgres create --name vectordb-db --region iad`
+4. Create Redis (Upstash): `fly redis create --name vectordb-redis --region iad`
+5. Create API app: `fly launch` (generates `fly.toml`)
+6. Set secrets: `fly secrets set DB_URL=... REDIS_URL=... API_KEY=...`
+7. Deploy: `fly deploy`
+8. Attach custom domain + auto-TLS
+
+**Files to create:**
+| File | Purpose |
+|------|---------|
+| `fly.toml` | API app config — build, env, services, health checks, scaling |
+| `Dockerfile` (modify) | Multi-stage build for smaller image |
+| `.dockerignore` (modify) | Exclude tests, docs, SDKs from image |
+
+**`fly.toml` will look like:**
+```toml
+app = "vectordb-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  STORAGE_BACKEND = "postgres"
+  LOG_FORMAT = "json"
+  WORKERS = "2"
+  PORT = "8000"
+  EMBEDDING_PROVIDER = "sentence-transformers"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    hard_limit = 250
+    soft_limit = 200
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/v1/health"
+  headers = {"x-api-key" = "your-bootstrap-key"}
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  count = 2
+```
 
 ### Sub-Phase 7.2: Tier System (Weeks 2-3)
 
-**Goal:** Implement free/pro/scale tier model with enforced limits.
+**Goal:** Enforce free/pro/scale limits at the application layer.
 
-- `tier` column on User model
-- `TIER_LIMITS` config dict
-- Per-tier rate limiting in middleware
-- Pre-write checks (collection count, vector count)
-- Usage tracking + `GET /v1/usage` endpoint
-
-### Sub-Phase 7.3: Kubernetes + Helm Chart (Weeks 3-5)
-
-**Goal:** Full K8s deployment installable with one command.
-
-- All K8s manifests written and tested locally (minikube)
-- Helm chart with per-environment value overrides
-- PostgreSQL via managed DB (or StatefulSet for staging)
-- Redis Deployment
-- Ingress with TLS
-- HPA for API pods
-
-### Sub-Phase 7.4: CI/CD Pipeline (Weeks 5-6)
-
-**Goal:** Push to `main` triggers auto test, build, deploy.
-
-- GitHub Actions: test -> build Docker image -> push to registry
-- Staging auto-deploy on merge to `main`
-- Production deploy on git tag `v*`
-- Rollback via `helm rollback`
-
-### Sub-Phase 7.5: Backup & DR (Weeks 6-7)
-
-**Goal:** Automated backups with tested restore.
-
-- PostgreSQL daily `pg_dump` to object storage
-- WAL archiving for point-in-time recovery
-- K8s CronJob for automated backups
-- DR runbook written and tested
-
-### Sub-Phase 7.6: Tenant Isolation Hardening (Weeks 7-8)
-
-**Goal:** Ensure tenants on different tiers can't impact each other.
-
-- Per-tier rate limits (replacing global limit)
-- Per-tier query timeouts (`statement_timeout`)
-- K8s NetworkPolicies
-- K8s resource limits on pods
-- Load testing to verify isolation
-
----
-
-## Part 3: Files to Create
-
-### Docker
-| File | Purpose |
-|------|---------|
-| `Dockerfile` (modify) | Multi-stage build, slim runtime |
-| `Dockerfile.web` (new) | Next.js production build |
-| `docker-compose.prod.yml` (new) | Full prod stack: API + Web + Postgres + Redis |
-
-### Kubernetes Manifests
-```
-k8s/
-  base/
-    namespace.yaml
-    api-deployment.yaml
-    api-service.yaml
-    web-deployment.yaml
-    web-service.yaml
-    ingress.yaml
-    configmap.yaml
-    secrets.yaml
-    hpa.yaml
-    postgres-statefulset.yaml
-    postgres-service.yaml
-    postgres-pvc.yaml
-    redis-deployment.yaml
-    redis-service.yaml
-    backup-cronjob.yaml
-  overlays/
-    staging/kustomization.yaml
-    production/kustomization.yaml
-```
-
-### Helm Chart
-```
-helm/vectordb/
-  Chart.yaml
-  values.yaml
-  values-staging.yaml
-  values-production.yaml
-  templates/
-    _helpers.tpl
-    api-deployment.yaml
-    api-service.yaml
-    api-hpa.yaml
-    web-deployment.yaml
-    web-service.yaml
-    ingress.yaml
-    configmap.yaml
-    secrets.yaml
-    postgres-statefulset.yaml
-    redis-deployment.yaml
-    NOTES.txt
-```
-
-### Application Code
-| File | Purpose |
-|------|---------|
-| `vectordb/tiers.py` (new) | `TIER_LIMITS` dict with free/pro/scale limits |
-| `vectordb/services/usage_service.py` (new) | Per-tenant usage tracking |
-| `vectordb/routers/billing.py` (new) | `GET /v1/usage`, `GET /v1/plan`, Stripe webhook |
-| `vectordb/models/db.py` (modify) | Add `tier` to User, add `TenantUsage` model |
-| `vectordb/auth.py` (modify) | Include `tier` in `ApiKeyInfo` |
-| `vectordb/middleware.py` (modify) | Per-tier rate limits |
-| `scripts/backup-postgres.sh` (new) | pg_dump to S3 |
-| `scripts/restore-postgres.sh` (new) | Restore from backup |
-
-### CI/CD
-| File | Purpose |
-|------|---------|
-| `.github/workflows/deploy.yml` (new) | Test -> Build -> Push -> Deploy pipeline |
-
----
-
-## Part 4: Tier System Design
+**Tier limits:**
 
 | Limit | Free | Pro ($29/mo) | Scale ($99/mo) |
 |-------|------|-------------|----------------|
@@ -202,96 +163,281 @@ helm/vectordb/
 | API keys per user | 2 | 10 | 50 |
 | Backups | None | Daily | Hourly + PITR |
 
-### Implementation Approach
+**Files to create/modify:**
+| File | Change |
+|------|--------|
+| `vectordb/tiers.py` (new) | `TIER_LIMITS` dict |
+| `vectordb/services/usage_service.py` (new) | Track per-tenant usage |
+| `vectordb/routers/billing.py` (new) | `GET /v1/usage`, `GET /v1/plan` |
+| `vectordb/models/db.py` (modify) | Add `tier` to User, `TenantUsage` model |
+| `vectordb/auth.py` (modify) | Include `tier` in `ApiKeyInfo` |
+| `vectordb/middleware.py` (modify) | Per-tier rate limits instead of global |
 
-1. Add `tier` column to `User` model (default: `"free"`)
-2. Create `TIER_LIMITS` dict in `vectordb/tiers.py`
-3. Modify `RateLimitMiddleware` to use per-tier RPM
-4. Add pre-write checks in routers (collection count, vector count)
-5. Add `TenantUsage` table for monthly aggregation
-6. Start with manual tier assignment; add Stripe later
+**Implementation:**
+1. Add `tier` column to `User` (default: `"free"`)
+2. Create `TIER_LIMITS` dict
+3. Modify rate limiter to use per-tier RPM
+4. Add pre-write checks in routers (collection count, vector count at limit?)
+5. Add `TenantUsage` table — monthly counters for API calls, vectors, storage
+6. Expose `GET /v1/usage` and `GET /v1/plan`
+7. Start with manual tier assignment via admin endpoint; add Stripe later
+
+### Sub-Phase 7.3: CI/CD Pipeline (Week 4)
+
+**Goal:** Push to `main` auto-deploys.
+
+Fly.io has native GitHub Actions integration. The pipeline:
+
+```
+Push to main → Run tests → Build + Deploy to staging
+Tag v*.*.* → Run tests → Build + Deploy to production
+```
+
+**File: `.github/workflows/fly-deploy.yml`**
+```yaml
+name: Deploy to Fly.io
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: vectordb_test
+        ports: ['5432:5432']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pytest tests/ -v --ignore=tests/test_phase6_cli.py --ignore=tests/test_phase6_python_sdk.py --ignore=tests/test_phase5.py
+        env:
+          EMBEDDING_PROVIDER: dummy
+          API_KEY: test-key
+
+  deploy-staging:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --app vectordb-api-staging
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-production:
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - run: flyctl deploy --app vectordb-api
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+```
+
+**GitHub Secrets needed:**
+| Secret | How to get |
+|--------|-----------|
+| `FLY_API_TOKEN` | `fly tokens create deploy -x 999999h` |
+
+### Sub-Phase 7.4: Backup & DR (Week 5)
+
+**Goal:** Automated backups with tested restore.
+
+**Fly Postgres handles most of this:**
+- Automatic daily snapshots (retained 7 days)
+- WAL-based point-in-time recovery
+- `fly postgres backup list` to see backups
+- `fly postgres backup restore` to restore
+
+**For extra safety (off-platform backup):**
+- Weekly `pg_dump` to an S3 bucket via GitHub Actions scheduled workflow
+- Retained 30 days
+
+**File: `.github/workflows/backup.yml`**
+```yaml
+name: Weekly Database Backup
+on:
+  schedule:
+    - cron: '0 3 * * 0'  # Sunday 3am UTC
+  workflow_dispatch:       # manual trigger
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Create backup
+        run: |
+          flyctl ssh console --app vectordb-db -C "pg_dump -Fc -U postgres vectordb" > backup.dump
+          aws s3 cp backup.dump s3://vectordb-backups/$(date +%Y-%m-%d).dump
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+```
+
+**Recovery scenarios on Fly:**
+
+| Scenario | What happens | Recovery |
+|----------|-------------|---------|
+| Machine crash | Fly auto-restarts it in ~5 seconds | Automatic |
+| Bad deploy | `fly releases rollback` | One command, <1 min |
+| Postgres data loss | `fly postgres backup restore` | 5-15 min |
+| Total Fly outage | Restore pg_dump to any Postgres instance | 30 min |
+
+### Sub-Phase 7.5: Tenant Isolation (Week 6)
+
+**Already done:**
+- User-scoped collections + API keys (multi-tenancy)
+- Rate limiting (global)
+
+**Still needed:**
+| What | How | Priority |
+|------|-----|----------|
+| Per-tier rate limits | Modify `middleware.py` to read `tier` from `ApiKeyInfo` | High |
+| Per-tier query timeouts | Set `statement_timeout` per tier on DB connections | Medium |
+| Per-tier connection pool | Limit concurrent DB connections per tier | Medium |
+| Resource isolation | Fly machines already isolated (each is a microVM) | Done by default |
+
+### Sub-Phase 7.6: Frontend Deploy (Week 6)
+
+Deploy the dashboard (vector-db-web) as a separate Fly app:
+
+```bash
+cd vector-db-web
+fly launch --name vectordb-web
+fly deploy
+```
+
+**File: `vector-db-web/fly.toml`**
+```toml
+app = "vectordb-web"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NEXT_PUBLIC_API_URL = "https://vectordb-api.fly.dev"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+```
 
 ---
 
-## Part 5: Tenant Isolation
+## Files Summary
 
-### Already Done
-- User-scoped collections via `user_id` FK
-- User-scoped API keys
-- Auth middleware resolves key -> user_id
-- Global rate limiting
+### New Files
 
-### Still Needed
-| Layer | What to Add |
-|-------|-------------|
-| Rate limiting | Per-tier RPM limits |
-| Resource limits | K8s `resources.requests/limits` on pods |
-| Network isolation | K8s NetworkPolicies |
-| Query timeouts | Per-tier `statement_timeout` in Postgres |
-| Noisy neighbor | Per-tier connection pool limits |
+| File | Purpose |
+|------|---------|
+| `fly.toml` | Fly.io API app config |
+| `vectordb/tiers.py` | Tier definitions + limits |
+| `vectordb/services/usage_service.py` | Per-tenant usage tracking |
+| `vectordb/routers/billing.py` | `GET /v1/usage`, `GET /v1/plan` endpoints |
+| `.github/workflows/fly-deploy.yml` | CI/CD: test -> deploy |
+| `.github/workflows/backup.yml` | Weekly off-platform DB backup |
 
----
+### Modified Files
 
-## Part 6: Backup & DR
-
-### Strategy (using managed Postgres)
-| Method | Frequency | Retention |
-|--------|-----------|-----------|
-| Automated snapshots | Daily | 30 days |
-| WAL archiving | Continuous | 7 days |
-| `pg_dump` to object storage | Daily (CronJob) | 30 days |
-
-### Recovery Scenarios
-| Scenario | Recovery Time | Data Loss |
-|----------|--------------|-----------|
-| API pod crash | ~10 seconds (K8s auto-restart) | None |
-| Postgres pod restart | ~30 seconds (PVC retains data) | None |
-| Data corruption | 5-30 minutes (restore from backup) | Up to 24h (daily) or minutes (PITR) |
-| Cluster destroyed | 30-60 minutes (re-create + restore) | Same as above |
+| File | Change |
+|------|--------|
+| `Dockerfile` | Multi-stage build (builder + runtime) |
+| `.dockerignore` | Exclude tests, docs, SDKs, .git |
+| `vectordb/models/db.py` | Add `tier` to User, `TenantUsage` model |
+| `vectordb/auth.py` | Include `tier` in `ApiKeyInfo` |
+| `vectordb/middleware.py` | Per-tier rate limits |
+| `vectordb/app.py` | Register billing router |
 
 ---
 
-## Part 7: Cloud Provider Recommendation
+## Scaling Strategy on Fly.io
 
-### DigitalOcean (Recommended for Startups)
+### Day 1 (0-50 users): ~$17/mo
+```bash
+fly scale count 2 --app vectordb-api           # 2 API machines
+fly scale vm shared-cpu-1x --memory 512        # 512MB each
+```
 
-| Component | Cost |
-|-----------|------|
-| K8s cluster (2 nodes, 2 vCPU/4GB each) | $48/mo |
-| Managed PostgreSQL (1GB) | $15/mo |
-| In-cluster Redis | $0 |
-| Spaces (backups, 250GB) | $5/mo |
-| **Total** | **~$68/mo** |
+### Growth (50-500 users): ~$59/mo
+```bash
+fly scale count 3 --app vectordb-api
+fly scale vm shared-cpu-2x --memory 1024
+fly postgres update --app vectordb-db          # upgrade Postgres
+```
 
-**Why DO over AWS/GCP:** Free K8s control plane, simpler UI, lower cost, good docs. Move to AWS/GCP when you need multi-region or compliance certs.
+### Scale (500+ users): ~$274/mo
+```bash
+fly scale count 5 --app vectordb-api
+fly scale vm dedicated-cpu-2x --memory 4096
+# Add multi-region
+fly regions add lhr sin --app vectordb-api     # London + Singapore
+```
 
-**Pre-revenue alternative:** Single $24/mo Droplet with `docker-compose.prod.yml`. Migrate to K8s when you have 5+ paying customers.
+### When to leave Fly.io for K8s
+- You need 50+ machines
+- You need custom networking (VPN, VPC peering)
+- Enterprise customers require specific cloud certifications
+- You need GPUs for embedding (Fly doesn't support GPUs yet)
+
+Until then, Fly.io handles everything.
 
 ---
 
-## Part 8: Timeline
+## Quick Start (This Weekend)
 
-### Month 1: Foundation (Weeks 1-4)
-| Week | Task |
-|------|------|
-| 1 | Production Docker Compose + multi-stage Dockerfile |
-| 2 | Tier model + per-tier rate limiting + usage tracking |
-| 3 | K8s manifests + Helm chart (test on minikube) |
-| 4 | CI/CD pipeline (test + build + push) |
+```bash
+# 1. Install Fly CLI
+curl -L https://fly.io/install.sh | sh
+fly auth login
 
-### Month 2: Production (Weeks 5-8)
-| Week | Task |
-|------|------|
-| 5 | DigitalOcean K8s cluster + managed Postgres + staging deploy |
-| 6 | Ingress + TLS + DNS + backup CronJob |
-| 7 | Production deploy pipeline + HPA |
-| 8 | Tenant isolation hardening + load testing + DR drill |
+# 2. Create Postgres
+fly postgres create --name vectordb-db --region iad --vm-size shared-cpu-1x
 
-### Start THIS Weekend
-1. Create `docker-compose.prod.yml` (Postgres + Redis + API)
-2. Test `STORAGE_BACKEND=postgres` end-to-end
-3. Add `tier` to User model + `TIER_LIMITS` dict
-4. Add per-tier rate limiting
-5. Deploy to a single DigitalOcean Droplet
+# 3. Create Redis (Upstash)
+fly redis create --name vectordb-redis --region iad --no-eviction
 
-**You now have a live managed service. Kubernetes comes after, not before.**
+# 4. Launch the API
+cd vector-db-mvp
+fly launch --name vectordb-api --region iad --no-deploy
+
+# 5. Attach Postgres + set secrets
+fly postgres attach vectordb-db --app vectordb-api
+fly secrets set \
+  STORAGE_BACKEND=postgres \
+  EMBEDDING_PROVIDER=sentence-transformers \
+  API_KEY=your-secure-bootstrap-key \
+  --app vectordb-api
+
+# 6. Deploy
+fly deploy
+
+# 7. Check it's running
+curl https://vectordb-api.fly.dev/v1/health -H "x-api-key: your-key"
+
+# 8. Scale to 2 machines
+fly scale count 2 --app vectordb-api
+```
+
+**Total time: ~30 minutes. Total cost: ~$17/month.**
