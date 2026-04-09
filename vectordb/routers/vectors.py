@@ -1,4 +1,6 @@
 # vectordb/routers/vectors.py
+import time
+
 import structlog
 from fastapi import APIRouter, Depends
 
@@ -11,7 +13,8 @@ from vectordb.backends.base import (
     VectorBackend,
 )
 from vectordb.config import get_settings
-from vectordb.models.schemas import BulkUpsertRequest, BatchDeleteRequest
+from vectordb.models.schemas import BulkUpsertRequest, BatchDeleteRequest, UpsertRequest
+from vectordb.services.embedding_service import embed_text, embed_batch
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -44,25 +47,58 @@ async def _ensure_default(backend: VectorBackend):
 # Collection-scoped endpoints
 # ------------------------------------------------------------------
 
+async def _check_collection_access(backend, collection_name, user_id):
+    """Verify the user has access to this collection. Returns error response or None."""
+    col = await backend.get_collection(collection_name, user_id=user_id)
+    if not col:
+        return error_response(404, f"Collection '{collection_name}' not found")
+    return None
+
+
 @router.post("/collections/{collection_name}/upsert")
 async def upsert_vector_in_collection(
     collection_name: str,
-    item: dict,
+    item: UpsertRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
+    t_start = time.perf_counter()
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     settings = _settings()
-    metadata = item.get("metadata") or {}
+    metadata = item.metadata or {}
     if len(metadata) > settings.max_metadata_size:
         return error_response(400, f"Metadata exceeds maximum of {settings.max_metadata_size} keys")
+
+    # Resolve text → vector via embedding_service
+    vector = item.vector
+    content = item.content
+    embedding_ms = 0.0
+    if not vector and item.text:
+        t0 = time.perf_counter()
+        vector = embed_text(item.text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+        if not content:
+            content = item.text
+
     try:
+        t_storage = time.perf_counter()
         result = await backend.upsert(
             collection_name,
-            item.get("external_id", ""),
-            item.get("vector", []),
+            item.external_id,
+            vector,
             metadata or None,
-            item.get("content"),
+            content,
         )
+        storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
+        logger.debug("upsert_timing", **timing, endpoint="upsert")
+
+        if item.include_timing:
+            result["timing_ms"] = timing
         return success_response(result)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
@@ -77,6 +113,10 @@ async def bulk_upsert_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
+    t_start = time.perf_counter()
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     settings = _settings()
     if len(req.items) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
@@ -85,14 +125,45 @@ async def bulk_upsert_in_collection(
             return error_response(
                 400, f"Metadata for '{it.external_id}' exceeds maximum of {settings.max_metadata_size} keys"
             )
+
+    # Batch-embed items that have text but no vector
+    embedding_ms = 0.0
+    text_indices = [i for i, it in enumerate(req.items) if not it.vector and it.text]
+    if text_indices:
+        t0 = time.perf_counter()
+        texts_to_embed = [req.items[i].text for i in text_indices]
+        embeddings = embed_batch(texts_to_embed)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+    else:
+        embeddings = []
+
     try:
-        items = [
-            {"external_id": it.external_id, "vector": it.vector,
-             "metadata": it.metadata, "content": it.content}
-            for it in req.items
-        ]
+        items = []
+        embed_idx = 0
+        for it in req.items:
+            vector = it.vector
+            content = it.content
+            if not vector and it.text:
+                vector = embeddings[embed_idx]
+                embed_idx += 1
+                if not content:
+                    content = it.text
+            items.append({
+                "external_id": it.external_id, "vector": vector,
+                "metadata": it.metadata, "content": content,
+            })
+        t_storage = time.perf_counter()
         results = await backend.bulk_upsert(collection_name, items)
-        return success_response({"results": results})
+        storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
+        logger.debug("bulk_upsert_timing", **timing, endpoint="bulk_upsert", count=len(req.items))
+
+        data = {"results": results}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:
@@ -106,6 +177,9 @@ async def delete_vector_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     try:
         result = await backend.delete_vector(collection_name, external_id)
         return success_response(result)
@@ -122,6 +196,9 @@ async def batch_delete_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     settings = _settings()
     if len(req.external_ids) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
@@ -138,23 +215,45 @@ async def batch_delete_in_collection(
 
 @router.post("/upsert")
 async def upsert_vector_legacy(
-    item: dict,
+    item: UpsertRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
+    t_start = time.perf_counter()
     await _ensure_default(backend)
     settings = _settings()
-    metadata = item.get("metadata") or {}
+    metadata = item.metadata or {}
     if len(metadata) > settings.max_metadata_size:
         return error_response(400, f"Metadata exceeds maximum of {settings.max_metadata_size} keys")
+
+    # Resolve text → vector
+    vector = item.vector
+    content = item.content
+    embedding_ms = 0.0
+    if not vector and item.text:
+        t0 = time.perf_counter()
+        vector = embed_text(item.text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+        if not content:
+            content = item.text
+
     try:
+        t_storage = time.perf_counter()
         result = await backend.upsert(
             DEFAULT_COLLECTION,
-            item.get("external_id", ""),
-            item.get("vector", []),
+            item.external_id,
+            vector,
             metadata or None,
-            item.get("content"),
+            content,
         )
+        storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
+        logger.debug("upsert_timing", **timing, endpoint="upsert_legacy")
+
+        if item.include_timing:
+            result["timing_ms"] = timing
         return success_response(result)
     except (CollectionNotFoundError, DimensionMismatchError) as e:
         return error_response(400, str(e))
@@ -166,18 +265,50 @@ async def bulk_upsert_legacy(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
+    t_start = time.perf_counter()
     settings = _settings()
     if len(req.items) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
     await _ensure_default(backend)
+
+    # Batch-embed items that have text but no vector
+    embedding_ms = 0.0
+    text_indices = [i for i, it in enumerate(req.items) if not it.vector and it.text]
+    if text_indices:
+        t0 = time.perf_counter()
+        texts_to_embed = [req.items[i].text for i in text_indices]
+        embeddings = embed_batch(texts_to_embed)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+    else:
+        embeddings = []
+
     try:
-        items = [
-            {"external_id": it.external_id, "vector": it.vector,
-             "metadata": it.metadata, "content": it.content}
-            for it in req.items
-        ]
+        items = []
+        embed_idx = 0
+        for it in req.items:
+            vector = it.vector
+            content = it.content
+            if not vector and it.text:
+                vector = embeddings[embed_idx]
+                embed_idx += 1
+                if not content:
+                    content = it.text
+            items.append({
+                "external_id": it.external_id, "vector": vector,
+                "metadata": it.metadata, "content": content,
+            })
+        t_storage = time.perf_counter()
         results = await backend.bulk_upsert(DEFAULT_COLLECTION, items)
-        return success_response({"results": results})
+        storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
+        logger.debug("bulk_upsert_timing", **timing, endpoint="bulk_upsert_legacy", count=len(req.items))
+
+        data = {"results": results}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except (CollectionNotFoundError, DimensionMismatchError) as e:
         return error_response(400, str(e))
 

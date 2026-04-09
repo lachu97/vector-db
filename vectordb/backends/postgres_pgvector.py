@@ -47,6 +47,7 @@ class _PgCollection(PgBase):
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")
     description = Column(Text, nullable=True)
+    user_id = Column(Integer, nullable=True, index=True)  # None = global/bootstrap
     created_at = Column(DateTime, server_default=func.now())
 
 
@@ -135,7 +136,8 @@ class PostgresVectorBackend(VectorBackend):
     # ------------------------------------------------------------------
 
     async def create_collection(
-        self, name: str, dim: int, distance_metric: str, description: Optional[str] = None
+        self, name: str, dim: int, distance_metric: str,
+        description: Optional[str] = None, user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         async with self._session_factory() as session:
             existing = await session.execute(
@@ -143,7 +145,10 @@ class PostgresVectorBackend(VectorBackend):
             )
             if existing.scalar_one_or_none():
                 raise CollectionAlreadyExistsError(name)
-            col = _PgCollection(name=name, dim=dim, distance_metric=distance_metric, description=description)
+            col = _PgCollection(
+                name=name, dim=dim, distance_metric=distance_metric,
+                description=description, user_id=user_id,
+            )
             session.add(col)
             await session.commit()
             await session.refresh(col)
@@ -165,20 +170,30 @@ class PostgresVectorBackend(VectorBackend):
         logger.info("pg_collection_created", name=name, dim=dim, metric=distance_metric)
         return self._col_dict(col, 0)
 
-    async def get_collection(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_collection(self, name: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(_PgCollection).where(_PgCollection.name == name)
-            )
+            stmt = select(_PgCollection).where(_PgCollection.name == name)
+            if user_id is not None:
+                from sqlalchemy import or_
+                stmt = stmt.where(
+                    or_(_PgCollection.user_id == user_id, _PgCollection.user_id.is_(None))
+                )
+            result = await session.execute(stmt)
             col = result.scalar_one_or_none()
             if not col:
                 return None
             count = await self._vec_count(session, name)
             return self._col_dict(col, count)
 
-    async def list_collections(self) -> List[Dict[str, Any]]:
+    async def list_collections(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(select(_PgCollection))
+            stmt = select(_PgCollection)
+            if user_id is not None:
+                from sqlalchemy import or_
+                stmt = stmt.where(
+                    or_(_PgCollection.user_id == user_id, _PgCollection.user_id.is_(None))
+                )
+            result = await session.execute(stmt)
             cols = result.scalars().all()
             out = []
             for col in cols:
@@ -186,11 +201,12 @@ class PostgresVectorBackend(VectorBackend):
                 out.append(self._col_dict(col, count))
             return out
 
-    async def delete_collection(self, name: str) -> None:
+    async def delete_collection(self, name: str, user_id: Optional[int] = None) -> None:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(_PgCollection).where(_PgCollection.name == name)
-            )
+            stmt = select(_PgCollection).where(_PgCollection.name == name)
+            if user_id is not None:
+                stmt = stmt.where(_PgCollection.user_id == user_id)
+            result = await session.execute(stmt)
             col = result.scalar_one_or_none()
             if not col:
                 raise CollectionNotFoundError(name)
@@ -205,11 +221,14 @@ class PostgresVectorBackend(VectorBackend):
             self._metadata.remove(vt)
         logger.info("pg_collection_deleted", name=name)
 
-    async def update_collection(self, name: str, description: Optional[str]) -> Optional[Dict[str, Any]]:
+    async def update_collection(
+        self, name: str, description: Optional[str], user_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(_PgCollection).where(_PgCollection.name == name)
-            )
+            stmt = select(_PgCollection).where(_PgCollection.name == name)
+            if user_id is not None:
+                stmt = stmt.where(_PgCollection.user_id == user_id)
+            result = await session.execute(stmt)
             col = result.scalar_one_or_none()
             if not col:
                 return None
@@ -645,6 +664,7 @@ class PostgresVectorBackend(VectorBackend):
             "dim": col.dim,
             "distance_metric": col.distance_metric,
             "description": col.description,
+            "user_id": col.user_id,
             "vector_count": vec_count,
             "created_at": str(col.created_at),
         }

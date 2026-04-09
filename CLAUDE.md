@@ -1,5 +1,20 @@
 # Vector DB — Project Context
 
+## AI EXECUTION RULES (MANDATORY)
+
+**Follow `ai_context/AI_RULES.md` strictly.**
+**Use `ai_context/` only.**
+**Do NOT scan the full codebase.**
+
+Before ANY task, read these files first:
+- `ai_context/system_graph.md`
+- `ai_context/call_flows.md`
+- `ai_context/file_roles.md`
+- `ai_context/hot_paths.md`
+- `ai_context/AI_RULES.md`
+
+Then open ONLY the relevant files listed in `ai_context/file_roles.md` for the current task. Do NOT explore the full repo. Ask the user before opening any unlisted file.
+
 ## Overview
 A lightweight, self-hosted vector database providing REST APIs for storing, searching, and managing vector embeddings with metadata. Built with FastAPI + HNSWlib + SQLite. Targeting startups and small-scale apps that need semantic search without expensive managed services.
 
@@ -206,3 +221,37 @@ alembic downgrade -1
 - [ ] Kubernetes deployment
 - [ ] Tenant isolation
 - [ ] Backup & disaster recovery
+
+---
+
+## Frontend-Requested Backend Changes (from vector-db-web)
+
+### 1. Multi-Tenancy / User-Scoped API Keys (CRITICAL)
+
+**Problem:** The frontend now has user authentication (sign up / sign in). But the backend has no concept of "users" — all API keys are global. When User A creates an API key, User B can see it too. Collections and vectors are also shared across all users.
+
+**What's needed:**
+- A `users` table (or `tenants`) — each user who signs up on the frontend needs an identity on the backend
+- API keys must be **scoped to a user** — `GET /v1/admin/keys` should only return keys belonging to the authenticated user
+- Collections must be **scoped to a user** — User A's collections should not be visible to User B
+- All CRUD operations (vectors, search, etc.) should be scoped to the user's own collections
+- The `x-api-key` header identifies both the auth AND the user scope — a key belongs to a user, and that user can only access their own data
+
+**Suggested approach:**
+- Add a `user_id` column to the `api_keys` table
+- Add a `user_id` column to the `collections` table
+- Auth middleware resolves `x-api-key` → key row → `user_id`, then filters all queries by that user
+- Add a user registration/lookup endpoint (or just auto-create users based on a `user_id` claim from the frontend)
+
+### 2. Bootstrap Key Creation for New Users (CRITICAL)
+
+**Problem:** New users who sign up on the frontend have no API key yet. To create one via `POST /v1/admin/keys`, they need a valid admin key in the `x-api-key` header — chicken-and-egg problem.
+
+**Current workaround:** The frontend uses `VITE_MASTER_API_KEY` (the backend's `test-key`) as a fallback for unauthenticated API calls. This works but means every frontend user shares the same master key, which defeats the purpose of per-user keys.
+
+**What's needed — pick one:**
+- **Option A (recommended):** A `/v1/auth/register` and `/v1/auth/login` endpoint that returns a user-scoped admin API key. The frontend calls this on sign-up/sign-in instead of using a master key. No `x-api-key` header needed for these endpoints.
+- **Option B:** A special `/v1/admin/keys/bootstrap` endpoint that accepts a master key + a `user_id` and creates a scoped admin key for that user. The master key is only used for this one call.
+- **Option C:** Auto-generate an admin API key for each new user on registration and return it in the response.
+
+**Impact:** Until this is solved, the frontend cannot properly isolate users. All users effectively share the same backend scope.

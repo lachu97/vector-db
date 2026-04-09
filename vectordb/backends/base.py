@@ -64,21 +64,27 @@ class VectorBackend(ABC):
 
     @abstractmethod
     async def create_collection(
-        self, name: str, dim: int, distance_metric: str, description: Optional[str] = None
+        self, name: str, dim: int, distance_metric: str,
+        description: Optional[str] = None, user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a new collection. Raises CollectionAlreadyExistsError if it exists."""
 
     @abstractmethod
-    async def get_collection(self, name: str) -> Optional[Dict[str, Any]]:
-        """Return collection info dict or None if not found."""
+    async def get_collection(self, name: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+        """Return collection info dict or None if not found.
+        If user_id is set, only return collections owned by that user or global (user_id=None).
+        If user_id param is None (bootstrap), return any collection."""
 
     @abstractmethod
-    async def list_collections(self) -> List[Dict[str, Any]]:
-        """Return list of all collection info dicts."""
+    async def list_collections(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Return list of collection info dicts.
+        If user_id is set, only return collections owned by that user or global (user_id=None).
+        If user_id param is None (bootstrap), return all."""
 
     @abstractmethod
-    async def delete_collection(self, name: str) -> None:
-        """Delete a collection and all its vectors. Raises CollectionNotFoundError."""
+    async def delete_collection(self, name: str, user_id: Optional[int] = None) -> None:
+        """Delete a collection and all its vectors. Raises CollectionNotFoundError.
+        If user_id is set, only delete if the collection belongs to that user (not global)."""
 
     # ------------------------------------------------------------------
     # Vectors
@@ -191,8 +197,11 @@ class VectorBackend(ABC):
     # Optional extensions (non-abstract — backends return None/[] if unsupported)
     # ------------------------------------------------------------------
 
-    async def update_collection(self, name: str, description: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Update collection metadata. Returns updated dict or None if unsupported."""
+    async def update_collection(
+        self, name: str, description: Optional[str], user_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Update collection metadata. Returns updated dict or None if unsupported.
+        If user_id is set, only update if the collection belongs to that user."""
         return None
 
     async def count_vectors(

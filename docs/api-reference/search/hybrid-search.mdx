@@ -16,8 +16,8 @@ description: Combine vector similarity and keyword matching using Reciprocal Ran
   Text query for keyword matching.
 </ParamField>
 
-<ParamField body="vector" type="number[]" required>
-  Query vector for semantic similarity. Typically the embedding of `query_text`.
+<ParamField body="vector" type="number[]">
+  Query vector for semantic similarity. Now optional -- if omitted, the backend auto-embeds `query_text` to generate the vector.
 </ParamField>
 
 <ParamField body="k" type="integer" default="10">
@@ -36,8 +36,12 @@ description: Combine vector similarity and keyword matching using Reciprocal Ran
   Optional metadata filter.
 </ParamField>
 
+<ParamField body="include_timing" type="boolean" default="false">
+  When `true`, the response includes a `timing_ms` object with `embedding_ms`, `search_ms`, and `total_ms` breakdowns.
+</ParamField>
+
 <RequestExample>
-```bash cURL
+```bash cURL (with vector)
 curl -X POST http://localhost:8000/v1/collections/articles/hybrid_search \
   -H "x-api-key: your-key" \
   -H "Content-Type: application/json" \
@@ -46,6 +50,18 @@ curl -X POST http://localhost:8000/v1/collections/articles/hybrid_search \
     "vector": [0.1, 0.2, 0.3],
     "k": 10,
     "alpha": 0.7
+  }'
+```
+
+```bash cURL (text only, auto-embed)
+curl -X POST http://localhost:8000/v1/collections/articles/hybrid_search \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query_text": "machine learning transformers",
+    "k": 10,
+    "alpha": 0.7,
+    "include_timing": true
   }'
 ```
 </RequestExample>
@@ -67,6 +83,27 @@ curl -X POST http://localhost:8000/v1/collections/articles/hybrid_search \
         "metadata": {"title": "Intro to machine learning"}
       }
     ]
+  },
+  "error": null
+}
+```
+
+```json With timing
+{
+  "status": "success",
+  "data": {
+    "results": [
+      {
+        "external_id": "doc-88",
+        "score": 0.9731,
+        "metadata": {"title": "Transformers explained"}
+      }
+    ],
+    "timing_ms": {
+      "embedding_ms": 12.1,
+      "search_ms": 5.3,
+      "total_ms": 17.4
+    }
   },
   "error": null
 }

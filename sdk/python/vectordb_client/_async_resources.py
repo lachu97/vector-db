@@ -9,8 +9,11 @@ from vectordb_client._http import _raise_for_response, _unwrap
 from vectordb_client.models import (
     ApiKey,
     Collection,
+    DocumentUploadResult,
     ExportResult,
     KeyUsageStats,
+    QueryResult,
+    RerankResult,
     UpsertResult,
     BulkUpsertResult,
     SearchResult,
@@ -34,6 +37,24 @@ class _AsyncResource:
             _raise_for_response(resp.status_code, body)
         # Check body-level errors (app returns HTTP 200 with error envelope)
         return _unwrap(body)
+
+
+class AsyncAuthResource(_AsyncResource):
+    """User registration and login (no API key required)."""
+
+    async def register(self, email: str, password: str) -> dict[str, Any]:
+        """Register a new user. Returns { user: {...}, api_key: {...} }."""
+        data = await self._request("POST", "/v1/auth/register", json={
+            "email": email, "password": password,
+        })
+        return data
+
+    async def login(self, email: str, password: str) -> dict[str, Any]:
+        """Login an existing user. Returns { user: {...}, api_key: {...} }."""
+        data = await self._request("POST", "/v1/auth/login", json={
+            "email": email, "password": password,
+        })
+        return data
 
 
 class AsyncCollectionsResource(_AsyncResource):
@@ -78,23 +99,39 @@ class AsyncVectorsResource(_AsyncResource):
         self,
         collection: str,
         external_id: str,
-        vector: list[float],
+        vector: list[float] | None = None,
         metadata: dict[str, Any] | None = None,
         namespace: str | None = None,
+        text: str | None = None,
+        include_timing: bool = False,
     ) -> UpsertResult:
-        payload: dict[str, Any] = {"external_id": external_id, "vector": vector}
+        payload: dict[str, Any] = {"external_id": external_id}
+        if vector is not None:
+            payload["vector"] = vector
+        if text is not None:
+            payload["text"] = text
         if metadata is not None:
             payload["metadata"] = metadata
         if namespace is not None:
             payload["namespace"] = namespace
+        if include_timing:
+            payload["include_timing"] = True
         data = await self._request("POST", f"/v1/collections/{collection}/upsert", json=payload)
         return UpsertResult.from_dict(data)
 
-    async def bulk_upsert(self, collection: str, items: list[dict[str, Any]]) -> BulkUpsertResult:
+    async def bulk_upsert(
+        self,
+        collection: str,
+        items: list[dict[str, Any]],
+        include_timing: bool = False,
+    ) -> BulkUpsertResult:
+        payload: dict[str, Any] = {"items": items}
+        if include_timing:
+            payload["include_timing"] = True
         data = await self._request(
             "POST",
             f"/v1/collections/{collection}/bulk_upsert",
-            json={"items": items},
+            json=payload,
         )
         return BulkUpsertResult.from_dict(data)
 
@@ -113,14 +150,22 @@ class AsyncSearchResource(_AsyncResource):
     async def search(
         self,
         collection: str,
-        vector: list[float],
+        vector: list[float] | None = None,
         k: int = 10,
         offset: int = 0,
         filters: dict[str, Any] | None = None,
+        text: str | None = None,
+        include_timing: bool = False,
     ) -> SearchResult:
-        payload: dict[str, Any] = {"vector": vector, "k": k, "offset": offset}
+        payload: dict[str, Any] = {"k": k, "offset": offset}
+        if vector is not None:
+            payload["vector"] = vector
+        if text is not None:
+            payload["text"] = text
         if filters is not None:
             payload["filters"] = filters
+        if include_timing:
+            payload["include_timing"] = True
         data = await self._request("POST", f"/v1/collections/{collection}/search", json=payload)
         return SearchResult.from_dict(data, collection=collection, k=k)
 
@@ -156,36 +201,51 @@ class AsyncSearchResource(_AsyncResource):
     async def rerank(
         self,
         collection: str,
-        query_vector: list[float],
-        candidates: list[str],
-    ) -> list[VectorResult]:
-        """Re-score a list of candidate IDs against a query vector."""
+        query_vector: list[float] | None = None,
+        candidates: list[str] | None = None,
+        text: str | None = None,
+        include_timing: bool = False,
+    ) -> RerankResult:
+        """Re-score a list of candidate IDs against a query vector or text."""
+        payload: dict[str, Any] = {}
+        if query_vector is not None:
+            payload["vector"] = query_vector
+        if text is not None:
+            payload["text"] = text
+        if candidates is not None:
+            payload["candidates"] = candidates
+        if include_timing:
+            payload["include_timing"] = True
         data = await self._request(
             "POST",
             f"/v1/collections/{collection}/rerank",
-            json={"vector": query_vector, "candidates": candidates},
+            json=payload,
         )
-        return [VectorResult.from_dict(r) for r in data["results"]]
+        return RerankResult.from_dict(data)
 
     async def hybrid_search(
         self,
         collection: str,
         query_text: str,
-        vector: list[float],
+        vector: list[float] | None = None,
         k: int = 10,
         offset: int = 0,
         alpha: float = 0.5,
         filters: dict[str, Any] | None = None,
+        include_timing: bool = False,
     ) -> SearchResult:
         payload: dict[str, Any] = {
             "query_text": query_text,
-            "vector": vector,
             "k": k,
             "offset": offset,
             "alpha": alpha,
         }
+        if vector is not None:
+            payload["vector"] = vector
         if filters is not None:
             payload["filters"] = filters
+        if include_timing:
+            payload["include_timing"] = True
         data = await self._request(
             "POST",
             f"/v1/collections/{collection}/hybrid_search",
@@ -253,6 +313,84 @@ class AsyncAdminKeysResource(_AsyncResource):
 
     async def get_usage_summary(self) -> dict[str, Any]:
         return await self._request("GET", "/v1/admin/keys/usage/summary")
+
+
+class AsyncDocumentsResource(_AsyncResource):
+    """Document upload for RAG pipelines (async)."""
+
+    async def upload(
+        self,
+        collection_name: str,
+        file_path: str,
+        include_timing: bool = False,
+    ) -> DocumentUploadResult:
+        """Upload a .txt file to be chunked and stored in a collection.
+
+        Args:
+            collection_name: Target collection name.
+            file_path: Path to a .txt file on the local filesystem.
+            include_timing: When True, the result includes a timing_ms breakdown.
+
+        Returns:
+            DocumentUploadResult with document_id and chunks_created count.
+        """
+        import os
+
+        filename = os.path.basename(file_path)
+        with open(file_path, "rb") as f:
+            file_content = f.read()
+
+        form: dict[str, Any] = {"collection_name": collection_name}
+        if include_timing:
+            form["include_timing"] = "true"
+
+        # Multipart upload via httpx — must not send default JSON content-type.
+        resp = await self._client.post(
+            self._url("/v1/documents/upload"),
+            data=form,
+            files={"file": (filename, file_content, "text/plain")},
+        )
+        body = resp.json()
+        if not resp.is_success:
+            _raise_for_response(resp.status_code, body)
+        data = _unwrap(body)
+        return DocumentUploadResult.from_dict(data)
+
+
+class AsyncQueryResource(_AsyncResource):
+    """RAG query — semantic search that returns text chunks (async)."""
+
+    async def query(
+        self,
+        query: str,
+        collection_name: str,
+        top_k: int = 5,
+        filters: dict[str, Any] | None = None,
+        include_timing: bool = False,
+    ) -> QueryResult:
+        """Run a natural-language query against a collection.
+
+        Args:
+            query: The query text.
+            collection_name: Collection to search in.
+            top_k: Number of results to return (default 5).
+            filters: Optional metadata filters.
+            include_timing: When True, the result includes a timing_ms breakdown.
+
+        Returns:
+            QueryResult containing matching text chunks with scores.
+        """
+        payload: dict[str, Any] = {
+            "query": query,
+            "collection_name": collection_name,
+            "top_k": top_k,
+        }
+        if filters is not None:
+            payload["filters"] = filters
+        if include_timing:
+            payload["include_timing"] = True
+        data = await self._request("POST", "/v1/query", json=payload)
+        return QueryResult.from_dict(data)
 
 
 class AsyncObservabilityResource(_AsyncResource):

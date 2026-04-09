@@ -11,12 +11,18 @@ export {
   ValidationError,
 } from "./errors.js";
 
+export type { AuthResponse } from "./resources/auth.js";
+
 export type {
   ApiKey,
   Collection,
+  DocumentUploadResult,
   ExportedVector,
   ExportResult,
   KeyUsageStats,
+  QueryResult,
+  QueryResultItem,
+  QueryOptions,
   UsageSummary,
   UpsertResult,
   BulkUpsertResult,
@@ -29,4 +35,5 @@ export type {
   UpsertItem,
   SearchOptions,
   HybridSearchOptions,
+  TimingInfo,
 } from "./types.js";

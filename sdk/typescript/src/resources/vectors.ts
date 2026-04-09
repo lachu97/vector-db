@@ -7,13 +7,17 @@ export class VectorsResource {
   async upsert(
     collection: string,
     externalId: string,
-    vector: number[],
+    vector?: number[],
     metadata?: Record<string, unknown>,
-    namespace?: string
+    namespace?: string,
+    options?: { text?: string; includeTiming?: boolean }
   ): Promise<UpsertResult> {
-    const body: Record<string, unknown> = { external_id: externalId, vector };
+    const body: Record<string, unknown> = { external_id: externalId };
+    if (vector !== undefined) body.vector = vector;
+    if (options?.text !== undefined) body.text = options.text;
     if (metadata !== undefined) body.metadata = metadata;
     if (namespace !== undefined) body.namespace = namespace;
+    if (options?.includeTiming) body.include_timing = true;
 
     return this.http.request<UpsertResult>(
       "POST",
@@ -24,20 +28,25 @@ export class VectorsResource {
 
   async bulkUpsert(
     collection: string,
-    items: UpsertItem[]
+    items: UpsertItem[],
+    options?: { includeTiming?: boolean }
   ): Promise<BulkUpsertResult> {
     // Normalize camelCase → snake_case for the API
     const apiItems = items.map((item) => ({
       external_id: item.external_id,
-      vector: item.vector,
+      ...(item.vector !== undefined && { vector: item.vector }),
+      ...(item.text !== undefined && { text: item.text }),
       ...(item.metadata !== undefined && { metadata: item.metadata }),
       ...(item.namespace !== undefined && { namespace: item.namespace }),
     }));
 
+    const body: Record<string, unknown> = { items: apiItems };
+    if (options?.includeTiming) body.include_timing = true;
+
     return this.http.request<BulkUpsertResult>(
       "POST",
       `/v1/collections/${collection}/bulk_upsert`,
-      { body: { items: apiItems } }
+      { body }
     );
   }
 

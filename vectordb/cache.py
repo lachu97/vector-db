@@ -120,18 +120,27 @@ class CachingBackend(VectorBackend):
     # Collections (no caching — metadata is cheap)
     # ------------------------------------------------------------------
 
-    async def create_collection(self, name, dim, distance_metric):
-        return await self._inner.create_collection(name, dim, distance_metric)
+    async def create_collection(self, name, dim, distance_metric, description=None, user_id=None):
+        return await self._inner.create_collection(name, dim, distance_metric, description, user_id)
 
-    async def get_collection(self, name):
-        return await self._inner.get_collection(name)
+    async def get_collection(self, name, user_id=None):
+        return await self._inner.get_collection(name, user_id)
 
-    async def list_collections(self):
-        return await self._inner.list_collections()
+    async def list_collections(self, user_id=None):
+        return await self._inner.list_collections(user_id)
 
-    async def delete_collection(self, name):
+    async def delete_collection(self, name, user_id=None):
         await self._cache.delete_pattern(_collection_pattern(name))
-        return await self._inner.delete_collection(name)
+        return await self._inner.delete_collection(name, user_id)
+
+    async def update_collection(self, name, description, user_id=None):
+        return await self._inner.update_collection(name, description, user_id)
+
+    async def count_vectors(self, collection_name, filters=None):
+        return await self._inner.count_vectors(collection_name, filters)
+
+    async def export_vectors(self, collection_name, limit=10000):
+        return await self._inner.export_vectors(collection_name, limit)
 
     # ------------------------------------------------------------------
     # Vectors (write → invalidate)

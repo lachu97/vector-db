@@ -11,7 +11,10 @@
 
 import { HttpClient, type FetchFn } from "./http.js";
 import { AdminKeysResource } from "./resources/keys.js";
+import { AuthResource } from "./resources/auth.js";
 import { CollectionsResource } from "./resources/collections.js";
+import { DocumentsResource } from "./resources/documents.js";
+import { QueryResource } from "./resources/query.js";
 import { VectorsResource } from "./resources/vectors.js";
 import { SearchResource } from "./resources/search.js";
 import { ObservabilityResource } from "./resources/observability.js";
@@ -26,9 +29,12 @@ export interface VectorDBClientOptions {
 }
 
 export class VectorDBClient {
+  readonly auth: AuthResource;
   readonly collections: CollectionsResource;
   readonly vectors: VectorsResource;
   readonly search: SearchResource;
+  readonly documents: DocumentsResource;
+  readonly query: QueryResource;
   readonly observability: ObservabilityResource;
   readonly keys: AdminKeysResource;
 
@@ -36,9 +42,12 @@ export class VectorDBClient {
 
   constructor(options: VectorDBClientOptions) {
     this.http = new HttpClient(options.baseUrl, options.apiKey, options.fetch);
+    this.auth = new AuthResource(this.http);
     this.collections = new CollectionsResource(this.http);
     this.vectors = new VectorsResource(this.http);
     this.search = new SearchResource(this.http);
+    this.documents = new DocumentsResource(this.http);
+    this.query = new QueryResource(this.http);
     this.observability = new ObservabilityResource(this.http);
     this.keys = new AdminKeysResource(this.http);
   }

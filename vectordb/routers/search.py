@@ -1,4 +1,6 @@
 # vectordb/routers/search.py
+import time
+
 import structlog
 from fastapi import APIRouter, Depends
 
@@ -11,6 +13,7 @@ from vectordb.backends.base import (
     VectorBackend,
 )
 from vectordb.models.schemas import HybridSearchRequest, RerankRequest, SearchRequest
+from vectordb.services.embedding_service import embed_text_cached_async
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -37,6 +40,14 @@ async def _ensure_default(backend: VectorBackend):
 # Collection-scoped endpoints
 # ------------------------------------------------------------------
 
+async def _check_collection_access(backend, collection_name, user_id):
+    """Verify the user has access to this collection. Returns error response or None."""
+    col = await backend.get_collection(collection_name, user_id=user_id)
+    if not col:
+        return error_response(404, f"Collection '{collection_name}' not found")
+    return None
+
+
 @router.post("/collections/{collection_name}/search")
 async def search_in_collection(
     collection_name: str,
@@ -44,15 +55,33 @@ async def search_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    t_start = time.perf_counter()
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
+
+    # Resolve text → vector via embedding_service (async, cached)
+    vector = req.vector
+    embedding_ms = 0.0
+    if not vector and req.text:
+        t0 = time.perf_counter()
+        vector = await embed_text_cached_async(req.text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+
     try:
-        results = await backend.search(collection_name, req.vector, req.k, req.offset, req.filters)
+        t_search = time.perf_counter()
+        results = await backend.search(collection_name, vector, req.k, req.offset, req.filters)
         total_count = await backend.count_vectors(collection_name, req.filters)
-        return success_response({
-            "results": results,
-            "total_count": total_count,
-            "k": req.k,
-            "offset": req.offset,
-        })
+        search_ms = round((time.perf_counter() - t_search) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "search_ms": search_ms, "total_ms": total_ms}
+        logger.debug("search_timing", **timing, endpoint="search")
+
+        data = {"results": results, "total_count": total_count, "k": req.k, "offset": req.offset}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:
@@ -68,6 +97,9 @@ async def recommend_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     try:
         results = await backend.recommend(collection_name, external_id, k, ef)
         return success_response({"results": results})
@@ -85,6 +117,9 @@ async def similarity_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     try:
         score = await backend.similarity(collection_name, id1, id2)
         return success_response({"score": score})
@@ -101,9 +136,32 @@ async def rerank_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    t_start = time.perf_counter()
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
+
+    # Resolve text → vector via embedding_service (async, cached)
+    vector = req.vector
+    embedding_ms = 0.0
+    if not vector and req.text:
+        t0 = time.perf_counter()
+        vector = await embed_text_cached_async(req.text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+
     try:
-        results = await backend.rerank(collection_name, req.vector, req.candidates)
-        return success_response({"results": results})
+        t_search = time.perf_counter()
+        results = await backend.rerank(collection_name, vector, req.candidates)
+        search_ms = round((time.perf_counter() - t_search) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "search_ms": search_ms, "total_ms": total_ms}
+        logger.debug("rerank_timing", **timing, endpoint="rerank")
+
+        data = {"results": results}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:
@@ -117,13 +175,36 @@ async def hybrid_search_in_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    t_start = time.perf_counter()
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
     if not (0.0 <= req.alpha <= 1.0):
         return error_response(400, "alpha must be between 0.0 and 1.0")
+
+    # Auto-embed query_text if vector not provided
+    vector = req.vector
+    embedding_ms = 0.0
+    if not vector:
+        t0 = time.perf_counter()
+        vector = await embed_text_cached_async(req.query_text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+
     try:
+        t_search = time.perf_counter()
         results = await backend.hybrid_search(
-            collection_name, req.query_text, req.vector, req.k, req.offset, req.alpha, req.filters
+            collection_name, req.query_text, vector, req.k, req.offset, req.alpha, req.filters
         )
-        return success_response({"results": results})
+        search_ms = round((time.perf_counter() - t_search) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "search_ms": search_ms, "total_ms": total_ms}
+        logger.debug("hybrid_search_timing", **timing, endpoint="hybrid_search")
+
+        data = {"results": results}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:
@@ -140,16 +221,30 @@ async def search_legacy(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    t_start = time.perf_counter()
     await _ensure_default(backend)
+
+    vector = req.vector
+    embedding_ms = 0.0
+    if not vector and req.text:
+        t0 = time.perf_counter()
+        vector = await embed_text_cached_async(req.text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+
     try:
-        results = await backend.search(DEFAULT_COLLECTION, req.vector, req.k, req.offset, req.filters)
+        t_search = time.perf_counter()
+        results = await backend.search(DEFAULT_COLLECTION, vector, req.k, req.offset, req.filters)
         total_count = await backend.count_vectors(DEFAULT_COLLECTION, req.filters)
-        return success_response({
-            "results": results,
-            "total_count": total_count,
-            "k": req.k,
-            "offset": req.offset,
-        })
+        search_ms = round((time.perf_counter() - t_search) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "search_ms": search_ms, "total_ms": total_ms}
+        logger.debug("search_timing", **timing, endpoint="search_legacy")
+
+        data = {"results": results, "total_count": total_count, "k": req.k, "offset": req.offset}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except (CollectionNotFoundError, DimensionMismatchError) as e:
         return error_response(400, str(e))
 
@@ -193,10 +288,29 @@ async def rerank_legacy(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    t_start = time.perf_counter()
     await _ensure_default(backend)
+
+    vector = req.vector
+    embedding_ms = 0.0
+    if not vector and req.text:
+        t0 = time.perf_counter()
+        vector = await embed_text_cached_async(req.text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+
     try:
-        results = await backend.rerank(DEFAULT_COLLECTION, req.vector, req.candidates)
-        return success_response({"results": results})
+        t_search = time.perf_counter()
+        results = await backend.rerank(DEFAULT_COLLECTION, vector, req.candidates)
+        search_ms = round((time.perf_counter() - t_search) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "search_ms": search_ms, "total_ms": total_ms}
+        logger.debug("rerank_timing", **timing, endpoint="rerank_legacy")
+
+        data = {"results": results}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except (CollectionNotFoundError, DimensionMismatchError) as e:
         return error_response(400, str(e))
 
@@ -207,13 +321,32 @@ async def hybrid_search_legacy(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
+    t_start = time.perf_counter()
     if not (0.0 <= req.alpha <= 1.0):
         return error_response(400, "alpha must be between 0.0 and 1.0")
     await _ensure_default(backend)
+
+    vector = req.vector
+    embedding_ms = 0.0
+    if not vector:
+        t0 = time.perf_counter()
+        vector = await embed_text_cached_async(req.query_text)
+        embedding_ms = round((time.perf_counter() - t0) * 1000, 2)
+
     try:
+        t_search = time.perf_counter()
         results = await backend.hybrid_search(
-            DEFAULT_COLLECTION, req.query_text, req.vector, req.k, req.offset, req.alpha, req.filters
+            DEFAULT_COLLECTION, req.query_text, vector, req.k, req.offset, req.alpha, req.filters
         )
-        return success_response({"results": results})
+        search_ms = round((time.perf_counter() - t_search) * 1000, 2)
+        total_ms = round((time.perf_counter() - t_start) * 1000, 2)
+
+        timing = {"embedding_ms": embedding_ms, "search_ms": search_ms, "total_ms": total_ms}
+        logger.debug("hybrid_search_timing", **timing, endpoint="hybrid_search_legacy")
+
+        data = {"results": results}
+        if req.include_timing:
+            data["timing_ms"] = timing
+        return success_response(data)
     except (CollectionNotFoundError, DimensionMismatchError) as e:
         return error_response(400, str(e))

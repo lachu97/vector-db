@@ -37,6 +37,7 @@ class Collection(Base):
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")  # cosine, l2, ip
     description = Column(Text, nullable=True)
+    user_id = Column(Integer, nullable=True, index=True)  # None = global/bootstrap
     created_at = Column(DateTime, server_default=func.now())
     vectors = relationship("Vector", back_populates="collection", cascade="all, delete-orphan")
 
@@ -68,6 +69,16 @@ class KeyUsageLog(Base):
     timestamp = Column(DateTime, server_default=func.now(), index=True)
 
 
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, server_default=func.now())
+
+    api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
+
+
 class ApiKey(Base):
     __tablename__ = "api_keys"
     id = Column(Integer, primary_key=True, index=True)
@@ -75,9 +86,12 @@ class ApiKey(Base):
     name = Column(String, nullable=False)
     role = Column(String, nullable=False)  # "admin", "readwrite", "readonly"
     is_active = Column(Boolean, nullable=False, default=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # None = bootstrap/global key
     created_at = Column(DateTime, server_default=func.now())
     expires_at = Column(DateTime, nullable=True)       # None = never expires
     last_used_at = Column(DateTime, nullable=True)     # updated on every authenticated request
+
+    user = relationship("User", back_populates="api_keys")
 
 
 def init_db():

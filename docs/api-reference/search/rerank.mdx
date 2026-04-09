@@ -14,22 +14,41 @@ Rerank is useful as a second-pass step: first retrieve a broad candidate set wit
   API key with any role.
 </ParamField>
 
-<ParamField body="vector" type="number[]" required>
-  Query vector to score candidates against.
+<ParamField body="vector" type="number[]">
+  Query vector to score candidates against. Either `vector` or `text` must be provided. If both are given, `vector` takes precedence.
+</ParamField>
+
+<ParamField body="text" type="string">
+  Plain text query. The backend generates a vector using the configured embedding model. Either `text` or `vector` must be provided. If both are given, `vector` takes precedence.
 </ParamField>
 
 <ParamField body="candidates" type="string[]" required>
   List of external IDs to re-score.
 </ParamField>
 
+<ParamField body="include_timing" type="boolean" default="false">
+  When `true`, the response includes a `timing_ms` object with `embedding_ms`, `search_ms`, and `total_ms` breakdowns.
+</ParamField>
+
 <RequestExample>
-```bash cURL
+```bash cURL (with vector)
 curl -X POST http://localhost:8000/v1/collections/articles/rerank \
   -H "x-api-key: your-key" \
   -H "Content-Type: application/json" \
   -d '{
     "vector": [0.1, 0.2, 0.3],
     "candidates": ["doc-1", "doc-2", "doc-3", "doc-4", "doc-5"]
+  }'
+```
+
+```bash cURL (with text)
+curl -X POST http://localhost:8000/v1/collections/articles/rerank \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "machine learning best practices",
+    "candidates": ["doc-1", "doc-2", "doc-3", "doc-4", "doc-5"],
+    "include_timing": true
   }'
 ```
 </RequestExample>
@@ -44,6 +63,24 @@ curl -X POST http://localhost:8000/v1/collections/articles/rerank \
       { "external_id": "doc-1", "score": 0.9541, "metadata": {} },
       { "external_id": "doc-5", "score": 0.9201, "metadata": {} }
     ]
+  },
+  "error": null
+}
+```
+
+```json With timing
+{
+  "status": "success",
+  "data": {
+    "results": [
+      { "external_id": "doc-3", "score": 0.9812, "metadata": {} },
+      { "external_id": "doc-1", "score": 0.9541, "metadata": {} }
+    ],
+    "timing_ms": {
+      "embedding_ms": 10.5,
+      "search_ms": 4.1,
+      "total_ms": 14.6
+    }
   },
   "error": null
 }

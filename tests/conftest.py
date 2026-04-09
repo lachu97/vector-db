@@ -15,6 +15,7 @@ os.environ["API_KEY"] = "test-key"
 os.environ["VECTOR_DIM"] = "384"
 os.environ["MAX_ELEMENTS"] = "1000"
 os.environ["RATE_LIMIT_PER_MINUTE"] = "100000"  # effectively unlimited during tests
+os.environ["EMBEDDING_PROVIDER"] = "dummy"  # no model download in tests
 
 from vectordb.app import app  # noqa: E402
 

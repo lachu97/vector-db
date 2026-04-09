@@ -11,13 +11,22 @@ export interface Collection {
   description?: string | null;
 }
 
+export interface TimingInfo {
+  embedding_ms?: number;
+  storage_ms?: number;
+  search_ms?: number;
+  total_ms: number;
+}
+
 export interface UpsertResult {
   external_id: string;
   status: "inserted" | "updated";
+  timing_ms?: TimingInfo;
 }
 
 export interface BulkUpsertResult {
   results: UpsertResult[];
+  timing_ms?: TimingInfo;
 }
 
 export interface VectorResult {
@@ -32,6 +41,7 @@ export interface SearchResult {
   k: number;
   total_count: number;
   offset: number;
+  timing_ms?: TimingInfo;
 }
 
 export interface ExportedVector {
@@ -104,7 +114,8 @@ export interface BatchDeleteResult {
 
 export interface UpsertItem {
   external_id: string;
-  vector: number[];
+  vector?: number[];
+  text?: string;
   metadata?: Record<string, unknown>;
   namespace?: string;
 }
@@ -113,10 +124,39 @@ export interface SearchOptions {
   k?: number;
   offset?: number;
   filters?: Record<string, unknown>;
+  includeTiming?: boolean;
 }
 
 export interface HybridSearchOptions extends SearchOptions {
   alpha?: number;
+}
+
+// RAG types
+
+export interface DocumentUploadResult {
+  document_id: string;
+  chunks_created: number;
+  timing_ms?: TimingInfo;
+}
+
+export interface QueryResultItem {
+  text: string;
+  score: number;
+  metadata: Record<string, unknown>;
+  external_id: string;
+}
+
+export interface QueryResult {
+  query: string;
+  collection: string;
+  results: QueryResultItem[];
+  timing_ms?: TimingInfo;
+}
+
+export interface QueryOptions {
+  top_k?: number;
+  filters?: Record<string, unknown>;
+  includeTiming?: boolean;
 }
 
 /** Internal API response envelope. */

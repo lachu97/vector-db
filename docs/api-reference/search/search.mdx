@@ -12,8 +12,12 @@ description: Find the k most similar vectors to a query vector.
   API key with any role.
 </ParamField>
 
-<ParamField body="vector" type="number[]" required>
-  Query vector. Must match the collection's dimension.
+<ParamField body="vector" type="number[]">
+  Query vector. Must match the collection's dimension. Either `vector` or `text` must be provided. If both are given, `vector` takes precedence.
+</ParamField>
+
+<ParamField body="text" type="string">
+  Plain text query. The backend generates a vector using the configured embedding model. Either `text` or `vector` must be provided. If both are given, `vector` takes precedence.
 </ParamField>
 
 <ParamField body="k" type="integer" default="10">
@@ -29,8 +33,12 @@ description: Find the k most similar vectors to a query vector.
   Example: `{"author": "Alice", "tag": "ml"}`
 </ParamField>
 
+<ParamField body="include_timing" type="boolean" default="false">
+  When `true`, the response includes a `timing_ms` object with `embedding_ms`, `search_ms`, and `total_ms` breakdowns.
+</ParamField>
+
 <RequestExample>
-```bash cURL
+```bash cURL (with vector)
 curl -X POST http://localhost:8000/v1/collections/articles/search \
   -H "x-api-key: your-key" \
   -H "Content-Type: application/json" \
@@ -38,6 +46,18 @@ curl -X POST http://localhost:8000/v1/collections/articles/search \
     "vector": [0.1, 0.2, 0.3],
     "k": 5,
     "filters": {"author": "Alice"}
+  }'
+```
+
+```bash cURL (with text)
+curl -X POST http://localhost:8000/v1/collections/articles/search \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "getting started with machine learning",
+    "k": 5,
+    "filters": {"author": "Alice"},
+    "include_timing": true
   }'
 ```
 </RequestExample>
@@ -62,6 +82,30 @@ curl -X POST http://localhost:8000/v1/collections/articles/search \
     "total_count": 150,
     "k": 5,
     "offset": 0
+  },
+  "error": null
+}
+```
+
+```json With timing
+{
+  "status": "success",
+  "data": {
+    "results": [
+      {
+        "external_id": "doc-42",
+        "score": 0.9823,
+        "metadata": {"title": "Getting started", "author": "Alice"}
+      }
+    ],
+    "total_count": 150,
+    "k": 5,
+    "offset": 0,
+    "timing_ms": {
+      "embedding_ms": 11.2,
+      "search_ms": 2.8,
+      "total_ms": 14.0
+    }
   },
   "error": null
 }

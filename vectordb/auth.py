@@ -21,6 +21,7 @@ class ApiKeyInfo:
     key: str
     name: str
     role: str  # "admin", "readwrite", "readonly"
+    user_id: Optional[int] = None  # None = bootstrap superadmin (sees everything)
 
 
 def _lookup_key(api_key: Optional[str], db: Session) -> ApiKeyInfo:
@@ -47,12 +48,12 @@ def _lookup_key(api_key: Optional[str], db: Session) -> ApiKeyInfo:
         except Exception:
             db.rollback()
 
-        return ApiKeyInfo(key=key_row.key, name=key_row.name, role=key_row.role)
+        return ApiKeyInfo(key=key_row.key, name=key_row.name, role=key_row.role, user_id=key_row.user_id)
 
     # Fallback: bootstrap admin key from environment
     settings = get_settings()
     if api_key == settings.api_key:
-        return ApiKeyInfo(key=api_key, name="bootstrap-admin", role="admin")
+        return ApiKeyInfo(key=api_key, name="bootstrap-admin", role="admin", user_id=None)
 
     raise HTTPException(status_code=401, detail="Invalid or missing API key")
 

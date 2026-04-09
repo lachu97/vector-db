@@ -41,6 +41,19 @@ const client = new VectorDBClient({
 
 ---
 
+## Auth (Registration & Login)
+
+```typescript
+// Register a new user (no apiKey needed for this call)
+const result = await client.auth.register("user@example.com", "securepassword");
+const apiKey = result.api_key.key; // Use this key for subsequent calls
+
+// Login
+const loginResult = await client.auth.login("user@example.com", "securepassword");
+```
+
+---
+
 ## Collections
 
 ```typescript
@@ -72,7 +85,7 @@ await client.collections.delete("articles");
 ## Vectors
 
 ```typescript
-// Upsert
+// Upsert with a raw vector
 const result = await client.vectors.upsert(
   "articles",
   "doc-1",
@@ -81,13 +94,36 @@ const result = await client.vectors.upsert(
 );
 console.log(result.status); // "inserted" or "updated"
 
-// Bulk upsert
-const items = vectors.map((v, i) => ({
-  external_id: `doc-${i}`,
-  vector: v,
-  metadata: { index: i },
-}));
-const bulk = await client.vectors.bulkUpsert("articles", items);
+// Upsert with text — the server embeds it for you
+const textResult = await client.vectors.upsert(
+  "articles",
+  "doc-2",
+  undefined, // no vector
+  { title: "Intro" },
+  undefined, // no namespace
+  { text: "An intro to vector databases" }
+);
+
+// Opt into timing metrics (embedding_ms, storage_ms, total_ms)
+const timed = await client.vectors.upsert(
+  "articles",
+  "doc-3",
+  undefined,
+  undefined,
+  undefined,
+  { text: "Another article", includeTiming: true }
+);
+console.log(timed.timing_ms?.embedding_ms, timed.timing_ms?.total_ms);
+
+// Bulk upsert — mix vectors and text in the same batch
+const items = [
+  { external_id: "doc-a", vector: vectors[0], metadata: { i: 0 } },
+  { external_id: "doc-b", text: "Second article body" },
+];
+const bulk = await client.vectors.bulkUpsert("articles", items, {
+  includeTiming: true,
+});
+console.log(bulk.timing_ms?.embedding_ms, bulk.timing_ms?.storage_ms);
 
 // Delete
 await client.vectors.delete("articles", "doc-1");
@@ -100,7 +136,7 @@ console.log(deleted.deleted_count);
 ## Search
 
 ```typescript
-// KNN search (now returns total_count for pagination)
+// KNN search with a raw vector (returns total_count for pagination)
 const results = await client.search.search("articles", queryVector, {
   k: 10,
   filters: { tags: "ml" },
@@ -110,25 +146,47 @@ for (const r of results.results) {
   console.log(r.external_id, r.score, r.metadata);
 }
 
+// Search with plain text — the server embeds the query for you (cached)
+const textResults = await client.search.search("articles", undefined, {
+  text: "machine learning tutorials",
+  k: 10,
+});
+
+// Opt into timing metrics (embedding_ms, search_ms, total_ms)
+const timedResults = await client.search.search("articles", undefined, {
+  text: "deep learning",
+  k: 10,
+  includeTiming: true,
+});
+console.log(timedResults.timing_ms?.embedding_ms, timedResults.timing_ms?.search_ms);
+
 // Recommendations
 const recs = await client.search.recommend("articles", "doc-1", { k: 5 });
 
 // Similarity between two stored vectors
 const score = await client.search.similarity("articles", "doc-1", "doc-2");
 
-// Rerank
+// Rerank with a vector...
 const reranked = await client.search.rerank("articles", queryVector, [
   "doc-1",
   "doc-2",
   "doc-3",
 ]);
 
-// Hybrid search
+// ...or rerank with text
+const textReranked = await client.search.rerank(
+  "articles",
+  undefined,
+  ["doc-1", "doc-2", "doc-3"],
+  { text: "machine learning best practices", includeTiming: true }
+);
+
+// Hybrid search — vector is now optional; backend auto-embeds query_text
 const hybrid = await client.search.hybridSearch(
   "articles",
   "machine learning transformers",
-  queryVector,
-  { k: 10, alpha: 0.7 }
+  undefined, // no vector needed
+  { k: 10, alpha: 0.7, includeTiming: true }
 );
 ```
 
@@ -169,6 +227,35 @@ console.log(summary.overall.total_requests);
 
 // Delete
 await client.keys.delete(2);
+```
+
+## RAG (Document Upload & Query)
+
+```typescript
+// Upload a text document to a collection
+const upload = await client.documents.upload("articles", fileBlob, "document.txt");
+console.log(upload.document_id);   // UUID of the uploaded document
+console.log(upload.chunks_created); // number of chunks generated
+
+// Upload with timing metrics
+const timedUpload = await client.documents.upload(
+  "articles",
+  fileBlob,
+  "document.txt",
+  { includeTiming: true }
+);
+console.log(timedUpload.timing_ms?.embedding_ms, timedUpload.timing_ms?.total_ms);
+
+// Query a collection with natural language
+const queryResults = await client.query.query(
+  "How does vector indexing work?",
+  "articles",
+  { top_k: 5, filters: { source: "docs" }, includeTiming: true }
+);
+console.log(queryResults.timing_ms?.embedding_ms, queryResults.timing_ms?.search_ms);
+for (const r of queryResults.results) {
+  console.log(r.text, r.score, r.metadata, r.external_id);
+}
 ```
 
 ## Error Handling
@@ -213,16 +300,19 @@ All methods are fully typed. Key types:
 
 ```typescript
 import type {
-  Collection,       // { name, dim, distance_metric, vector_count, description? }
-  VectorResult,     // { external_id, score, metadata }
-  SearchResult,     // { results, collection, k, total_count, offset }
-  UpsertResult,     // { external_id, status }
-  BulkUpsertResult, // { results }
-  ExportResult,     // { collection, dim, distance_metric, count, vectors }
-  ApiKey,           // { id, name, role, is_active, created_at, expires_at?, key? }
-  KeyUsageStats,    // { total_requests, last_24h, last_7d, last_30d, by_endpoint }
-  UsageSummary,     // { overall, by_key }
-  HealthStats,      // { status, total_vectors, total_collections, collections }
-  SearchOptions,    // { k?, offset?, filters? }
+  Collection,           // { name, dim, distance_metric, vector_count, description? }
+  VectorResult,         // { external_id, score, metadata }
+  SearchResult,         // { results, collection, k, total_count, offset, timing_ms? }
+  UpsertResult,         // { external_id, status, timing_ms? }
+  BulkUpsertResult,     // { results, timing_ms? }
+  TimingInfo,           // { total_ms, embedding_ms?, storage_ms?, search_ms? }
+  ExportResult,         // { collection, dim, distance_metric, count, vectors }
+  DocumentUploadResult, // { document_id, chunks_created, timing_ms? }
+  QueryResult,          // { query, collection, results, timing_ms? }
+  ApiKey,               // { id, name, role, is_active, created_at, expires_at?, key? }
+  KeyUsageStats,        // { total_requests, last_24h, last_7d, last_30d, by_endpoint }
+  UsageSummary,         // { overall, by_key }
+  HealthStats,          // { status, total_vectors, total_collections, collections }
+  SearchOptions,        // { k?, offset?, filters?, includeTiming? }
 } from "vectordb-client";
 ```

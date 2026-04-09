@@ -23,3 +23,9 @@ aiosqlite
 asyncpg
 pgvector
 redis[hiredis]
+bcrypt
+email-validator
+# Phase 7: RAG Layer
+sentence-transformers
+msgpack
+python-multipart

@@ -25,9 +25,14 @@ from vectordb_client.exceptions import (
 from vectordb_client.models import (
     ApiKey,
     Collection,
+    DocumentUploadResult,
     ExportResult,
     ExportedVector,
     KeyUsageStats,
+    QueryResult,
+    QueryResultItem,
+    RerankResult,
+    TimingInfo,
     VectorResult,
     SearchResult,
     UpsertResult,
@@ -35,7 +40,7 @@ from vectordb_client.models import (
     HealthStats,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 __all__ = [
     "VectorDBClient",
     "AsyncVectorDBClient",
@@ -47,9 +52,14 @@ __all__ = [
     "RateLimitError",
     "ApiKey",
     "Collection",
+    "DocumentUploadResult",
     "ExportResult",
     "ExportedVector",
     "KeyUsageStats",
+    "QueryResult",
+    "QueryResultItem",
+    "RerankResult",
+    "TimingInfo",
     "VectorResult",
     "SearchResult",
     "UpsertResult",

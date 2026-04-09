@@ -1,6 +1,6 @@
 {
   "name": "vectordb-client",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "description": "TypeScript/JavaScript SDK for the VectorDB REST API",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

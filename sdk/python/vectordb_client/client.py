@@ -6,7 +6,10 @@ import requests
 
 from vectordb_client._resources import (
     AdminKeysResource,
+    AuthResource,
     CollectionsResource,
+    DocumentsResource,
+    QueryResource,
     VectorsResource,
     SearchResource,
     ObservabilityResource,
@@ -37,9 +40,12 @@ class VectorDBClient:
         })
         self._session.timeout = timeout  # type: ignore[assignment]
 
+        self.auth = AuthResource(self._session, base_url)
         self.collections = CollectionsResource(self._session, base_url)
         self.vectors = VectorsResource(self._session, base_url)
         self.search = SearchResource(self._session, base_url)
+        self.documents = DocumentsResource(self._session, base_url)
+        self.query = QueryResource(self._session, base_url)
         self.observability = ObservabilityResource(self._session, base_url)
         self.keys = AdminKeysResource(self._session, base_url)
 

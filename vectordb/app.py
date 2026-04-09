@@ -13,7 +13,7 @@ from vectordb.models.db import init_db, ENGINE
 from vectordb.metrics import MetricsMiddleware
 from vectordb.middleware import RateLimitMiddleware
 from vectordb.services.vector_service import error_response
-from vectordb.routers import collections, vectors, search, keys, observability
+from vectordb.routers import auth, collections, vectors, search, keys, observability, documents, query
 from vectordb.tracing import setup_tracing
 
 # ------------------------------------------------------------------
@@ -63,6 +63,11 @@ async def lifespan(app: FastAPI):
 
         # Start the async backend
         await app.state.backend.startup()
+
+        # Initialize embedding provider (eager load + warmup)
+        from vectordb.services.embedding_service import initialize_provider
+        initialize_provider()
+
         logger.info("app_startup_complete")
     except Exception as e:
         logger.error("startup_failed", error=str(e), traceback=traceback.format_exc())
@@ -109,10 +114,13 @@ app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_
 # ------------------------------------------------------------------
 # Routers
 # ------------------------------------------------------------------
+app.include_router(auth.router)
 app.include_router(collections.router)
 app.include_router(vectors.router)
 app.include_router(search.router)
 app.include_router(keys.router)
+app.include_router(documents.router)
+app.include_router(query.router)
 app.include_router(observability.router)
 
 

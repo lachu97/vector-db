@@ -66,6 +66,14 @@ const sidebars = {
     },
     {
       type: "category",
+      label: "RAG",
+      items: [
+        "api-reference/rag/upload",
+        "api-reference/rag/query",
+      ],
+    },
+    {
+      type: "category",
       label: "Admin",
       items: ["api-reference/admin/health", "api-reference/admin/keys"],
     },

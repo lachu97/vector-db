@@ -27,18 +27,39 @@ class Collection:
 
 
 @dataclass
+class TimingInfo:
+    """Timing breakdown returned when include_timing=True."""
+    total_ms: float
+    embedding_ms: float | None = None
+    storage_ms: float | None = None
+    search_ms: float | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "TimingInfo":
+        return cls(
+            total_ms=d.get("total_ms", 0.0),
+            embedding_ms=d.get("embedding_ms"),
+            storage_ms=d.get("storage_ms"),
+            search_ms=d.get("search_ms"),
+        )
+
+
+@dataclass
 class UpsertResult:
     external_id: str
     status: str  # "inserted" | "updated"
+    timing_ms: TimingInfo | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "UpsertResult":
-        return cls(external_id=d["external_id"], status=d["status"])
+        timing = TimingInfo.from_dict(d["timing_ms"]) if d.get("timing_ms") else None
+        return cls(external_id=d["external_id"], status=d["status"], timing_ms=timing)
 
 
 @dataclass
 class BulkUpsertResult:
     results: list[UpsertResult]
+    timing_ms: TimingInfo | None = None
 
     @property
     def inserted(self) -> list[UpsertResult]:
@@ -50,7 +71,11 @@ class BulkUpsertResult:
 
     @classmethod
     def from_dict(cls, d: dict) -> "BulkUpsertResult":
-        return cls(results=[UpsertResult.from_dict(r) for r in d["results"]])
+        timing = TimingInfo.from_dict(d["timing_ms"]) if d.get("timing_ms") else None
+        return cls(
+            results=[UpsertResult.from_dict(r) for r in d["results"]],
+            timing_ms=timing,
+        )
 
 
 @dataclass
@@ -75,6 +100,7 @@ class SearchResult:
     k: int
     total_count: int = -1
     offset: int = 0
+    timing_ms: TimingInfo | None = None
 
     def __iter__(self):
         return iter(self.results)
@@ -87,12 +113,38 @@ class SearchResult:
 
     @classmethod
     def from_dict(cls, d: dict, collection: str, k: int) -> "SearchResult":
+        timing = TimingInfo.from_dict(d["timing_ms"]) if d.get("timing_ms") else None
         return cls(
             results=[VectorResult.from_dict(r) for r in d["results"]],
             collection=collection,
             k=k,
             total_count=d.get("total_count", -1),
             offset=d.get("offset", 0),
+            timing_ms=timing,
+        )
+
+
+@dataclass
+class RerankResult:
+    """Result from a rerank operation, with optional timing."""
+    results: list[VectorResult]
+    timing_ms: TimingInfo | None = None
+
+    def __iter__(self):
+        return iter(self.results)
+
+    def __len__(self):
+        return len(self.results)
+
+    def __getitem__(self, idx):
+        return self.results[idx]
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "RerankResult":
+        timing = TimingInfo.from_dict(d["timing_ms"]) if d.get("timing_ms") else None
+        return cls(
+            results=[VectorResult.from_dict(r) for r in d["results"]],
+            timing_ms=timing,
         )
 
 
@@ -196,4 +248,64 @@ class HealthStats:
             total_collections=d.get("total_collections", 0),
             collections=d.get("collections", []),
             uptime_seconds=d.get("uptime_seconds"),
+        )
+
+
+@dataclass
+class DocumentUploadResult:
+    document_id: str
+    chunks_created: int
+    timing_ms: TimingInfo | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DocumentUploadResult":
+        timing = TimingInfo.from_dict(d["timing_ms"]) if d.get("timing_ms") else None
+        return cls(
+            document_id=d["document_id"],
+            chunks_created=d["chunks_created"],
+            timing_ms=timing,
+        )
+
+
+@dataclass
+class QueryResultItem:
+    text: str
+    score: float
+    metadata: dict[str, Any] = field(default_factory=dict)
+    external_id: str = ""
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "QueryResultItem":
+        return cls(
+            text=d["text"],
+            score=d["score"],
+            metadata=d.get("metadata") or {},
+            external_id=d.get("external_id", ""),
+        )
+
+
+@dataclass
+class QueryResult:
+    query: str
+    collection: str
+    results: list[QueryResultItem]
+    timing_ms: TimingInfo | None = None
+
+    def __iter__(self):
+        return iter(self.results)
+
+    def __len__(self):
+        return len(self.results)
+
+    def __getitem__(self, idx):
+        return self.results[idx]
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "QueryResult":
+        timing = TimingInfo.from_dict(d["timing_ms"]) if d.get("timing_ms") else None
+        return cls(
+            query=d["query"],
+            collection=d["collection"],
+            results=[QueryResultItem.from_dict(r) for r in d["results"]],
+            timing_ms=timing,
         )

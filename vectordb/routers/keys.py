@@ -20,6 +20,14 @@ router = APIRouter(prefix="/v1/admin/keys", tags=["api-keys"])
 VALID_ROLES = {"admin", "readwrite", "readonly"}
 
 
+def _scoped_key_query(db: Session, auth: ApiKeyInfo):
+    """Return a query on ApiKey scoped to the user. Bootstrap (user_id=None) sees all."""
+    q = db.query(ApiKey)
+    if auth.user_id is not None:
+        q = q.filter(ApiKey.user_id == auth.user_id)
+    return q
+
+
 def _format_key(row: ApiKey, include_key: bool = False) -> dict:
     data = {
         "id": row.id,
@@ -80,6 +88,7 @@ def create_api_key(
         name=req.name.strip(),
         role=req.role,
         is_active=True,
+        user_id=auth.user_id,
         expires_at=expires_at,
     )
     db.add(row)
@@ -100,7 +109,7 @@ def list_api_keys(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    rows = db.query(ApiKey).order_by(ApiKey.created_at.desc()).all()
+    rows = _scoped_key_query(db, auth).order_by(ApiKey.created_at.desc()).all()
     return success_response({"keys": [_format_key(r) for r in rows]})
 
 
@@ -114,7 +123,7 @@ def get_api_key(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    row = db.query(ApiKey).filter_by(id=key_id).first()
+    row = _scoped_key_query(db, auth).filter_by(id=key_id).first()
     if not row:
         return error_response(404, f"API key {key_id} not found")
     return success_response(_format_key(row))
@@ -131,7 +140,7 @@ def update_api_key(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    row = db.query(ApiKey).filter_by(id=key_id).first()
+    row = _scoped_key_query(db, auth).filter_by(id=key_id).first()
     if not row:
         return error_response(404, f"API key {key_id} not found")
 
@@ -167,7 +176,7 @@ def rotate_api_key(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    row = db.query(ApiKey).filter_by(id=key_id).first()
+    row = _scoped_key_query(db, auth).filter_by(id=key_id).first()
     if not row:
         return error_response(404, f"API key {key_id} not found")
 
@@ -215,7 +224,7 @@ def get_key_usage(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    row = db.query(ApiKey).filter_by(id=key_id).first()
+    row = _scoped_key_query(db, auth).filter_by(id=key_id).first()
     if not row:
         return error_response(404, f"API key {key_id} not found")
 
@@ -232,7 +241,12 @@ def get_usage_summary(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    logs = db.query(KeyUsageLog).order_by(KeyUsageLog.timestamp).all()
+    # Scope: only show usage for keys belonging to this user
+    if auth.user_id is not None:
+        user_key_ids = [k.id for k in db.query(ApiKey).filter_by(user_id=auth.user_id).all()]
+        logs = db.query(KeyUsageLog).filter(KeyUsageLog.key_id.in_(user_key_ids)).order_by(KeyUsageLog.timestamp).all()
+    else:
+        logs = db.query(KeyUsageLog).order_by(KeyUsageLog.timestamp).all()
     by_key = defaultdict(list)
     for l in logs:
         by_key[l.key_name].append(l)
@@ -259,7 +273,7 @@ def delete_api_key(
     db: Session = Depends(get_db),
     auth: ApiKeyInfo = Depends(require_admin),
 ):
-    row = db.query(ApiKey).filter_by(id=key_id).first()
+    row = _scoped_key_query(db, auth).filter_by(id=key_id).first()
     if not row:
         return error_response(404, f"API key {key_id} not found")
 

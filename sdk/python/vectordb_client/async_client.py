@@ -6,7 +6,10 @@ import httpx
 
 from vectordb_client._async_resources import (
     AsyncAdminKeysResource,
+    AsyncAuthResource,
     AsyncCollectionsResource,
+    AsyncDocumentsResource,
+    AsyncQueryResource,
     AsyncVectorsResource,
     AsyncSearchResource,
     AsyncObservabilityResource,
@@ -39,17 +42,23 @@ class AsyncVectorDBClient:
         self._http: httpx.AsyncClient | None = None
 
         # Resources are attached after _http is initialized
+        self.auth: AsyncAuthResource
         self.collections: AsyncCollectionsResource
         self.vectors: AsyncVectorsResource
         self.search: AsyncSearchResource
+        self.documents: AsyncDocumentsResource
+        self.query: AsyncQueryResource
         self.observability: AsyncObservabilityResource
         self.keys: AsyncAdminKeysResource
 
     def _init_resources(self) -> None:
         assert self._http is not None
+        self.auth = AsyncAuthResource(self._http, self._base_url)
         self.collections = AsyncCollectionsResource(self._http, self._base_url)
         self.vectors = AsyncVectorsResource(self._http, self._base_url)
         self.search = AsyncSearchResource(self._http, self._base_url)
+        self.documents = AsyncDocumentsResource(self._http, self._base_url)
+        self.query = AsyncQueryResource(self._http, self._base_url)
         self.observability = AsyncObservabilityResource(self._http, self._base_url)
         self.keys = AsyncAdminKeysResource(self._http, self._base_url)
 

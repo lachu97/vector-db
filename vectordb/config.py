@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     max_elements: int = 10_000
     ef_construction: int = 200
     m: int = 16
-    ef_query: int = 50
+    ef_query: int = 30
     db_url: str = "sqlite:///./vectors.db"
     port: int = 8000
     workers: int = 4
@@ -34,6 +34,16 @@ class Settings(BaseSettings):
     otel_enabled: bool = False
     otel_service_name: str = "vector-db"
     otel_endpoint: str = ""       # e.g. "http://localhost:4318" for OTLP HTTP
+
+    # RAG / Embedding
+    embedding_provider: str = "sentence-transformers"  # "sentence-transformers" | "dummy"
+    embedding_model: str = "all-MiniLM-L6-v2"          # 384-dim, matches vector_dim
+    chunk_size: int = 500
+    chunk_overlap: int = 50
+    embedding_cache_size: int = 1000
+    embedding_cache_ttl: int = 3600                     # Redis cache TTL in seconds
+    max_concurrent_embeddings: int = 4
+    max_query_length: int = 1000
 
     # Storage backend — Phase 5
     storage_backend: str = "sqlite"   # "sqlite" or "postgres"

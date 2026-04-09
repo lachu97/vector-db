@@ -34,7 +34,9 @@ async def create_collection(
         return error_response(400, f"Dimension must not exceed {settings.max_vector_dim}")
 
     try:
-        col = await backend.create_collection(req.name, req.dim, req.distance_metric, req.description)
+        col = await backend.create_collection(
+            req.name, req.dim, req.distance_metric, req.description, user_id=auth.user_id
+        )
         return success_response(col)
     except CollectionAlreadyExistsError:
         return error_response(409, f"Collection '{req.name}' already exists")
@@ -45,7 +47,7 @@ async def list_collections(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
-    cols = await backend.list_collections()
+    cols = await backend.list_collections(user_id=auth.user_id)
     return success_response({"collections": cols})
 
 
@@ -55,7 +57,7 @@ async def get_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
-    col = await backend.get_collection(name)
+    col = await backend.get_collection(name, user_id=auth.user_id)
     if not col:
         return error_response(404, f"Collection '{name}' not found")
     return success_response(col)
@@ -68,7 +70,7 @@ async def update_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
 ):
-    result = await backend.update_collection(name, req.description)
+    result = await backend.update_collection(name, req.description, user_id=auth.user_id)
     if result is None:
         return error_response(404, f"Collection '{name}' not found")
     return success_response(result)
@@ -81,7 +83,7 @@ async def export_collection(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
-    col = await backend.get_collection(name)
+    col = await backend.get_collection(name, user_id=auth.user_id)
     if not col:
         return error_response(404, f"Collection '{name}' not found")
     if limit < 1 or limit > 100000:
@@ -103,7 +105,7 @@ async def delete_collection(
     auth: ApiKeyInfo = Depends(require_admin),
 ):
     try:
-        await backend.delete_collection(name)
+        await backend.delete_collection(name, user_id=auth.user_id)
         return success_response({"status": "deleted", "name": name})
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{name}' not found")

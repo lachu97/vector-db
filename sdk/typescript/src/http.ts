@@ -86,4 +86,50 @@ export class HttpClient {
 
     return unwrap(body);
   }
+
+  /**
+   * Send a multipart/form-data POST request (used for file uploads).
+   *
+   * @param path - API endpoint path.
+   * @param fields - Plain text form fields (key-value pairs).
+   * @param file - The file content as a Blob or Buffer.
+   * @param filename - The filename to attach.
+   */
+  async requestMultipart<T>(
+    path: string,
+    fields: Record<string, string>,
+    file: Blob | Buffer,
+    filename: string
+  ): Promise<T> {
+    const url = `${this.baseUrl}${path}`;
+
+    const formData = new FormData();
+    for (const [key, value] of Object.entries(fields)) {
+      formData.append(key, value);
+    }
+    // Convert Buffer to Blob if needed (Node.js compatibility)
+    const blob =
+      file instanceof Blob ? file : new Blob([file], { type: "text/plain" });
+    formData.append("file", blob, filename);
+
+    // Use all headers except Content-Type — the browser/runtime sets the
+    // correct multipart boundary automatically.
+    const { "Content-Type": _, ...headersWithoutCT } = this.headers;
+
+    const init: RequestInit = {
+      method: "POST",
+      headers: headersWithoutCT,
+      body: formData,
+    };
+
+    const resp = await this.fetchFn(url, init);
+    const body = (await resp.json()) as ApiResponse<T>;
+
+    if (!resp.ok) {
+      const msg = body?.error?.message ?? `HTTP ${resp.status}`;
+      raiseForResponse(resp.status, msg);
+    }
+
+    return unwrap(body);
+  }
 }

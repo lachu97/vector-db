@@ -3,6 +3,46 @@ title: Authentication
 description: Managing API keys and roles.
 ---
 
+## User Registration & Login
+
+The auth endpoints do **not** require an `x-api-key` header.
+
+### Register
+
+```bash
+curl -X POST http://localhost:8000/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "securepass"}'
+```
+
+Response:
+
+```json
+{
+  "status": "success",
+  "data": {
+    "user": { "id": 1, "email": "user@example.com", "created_at": "..." },
+    "api_key": { "id": 1, "key": "sk-...", "name": "user@example.com-admin", "role": "admin" }
+  }
+}
+```
+
+### Login
+
+```bash
+curl -X POST http://localhost:8000/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "securepass"}'
+```
+
+Returns the same shape as register. Use the returned `api_key.key` for all subsequent requests.
+
+### Multi-Tenancy
+
+Each user's API keys and collections are isolated. A key can only see and modify resources belonging to the same user. The bootstrap admin key (from `API_KEY` env var) has global access.
+
+---
+
 ## Creating API Keys
 
 API key management requires an `admin`-role key.

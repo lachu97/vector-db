@@ -53,6 +53,7 @@ class _Collection(Base):
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")
     description = Column(Text, nullable=True)
+    user_id = Column(Integer, nullable=True, index=True)  # None = global/bootstrap
     created_at = Column(DateTime, server_default=func.now())
     vectors = relationship("_Vector", back_populates="collection", cascade="all, delete-orphan", lazy="raise")
 
@@ -97,6 +98,7 @@ def _col_to_dict(col: _Collection, vec_count: int) -> Dict[str, Any]:
         "dim": col.dim,
         "distance_metric": col.distance_metric,
         "description": col.description,
+        "user_id": col.user_id,
         "vector_count": vec_count,
         "created_at": str(col.created_at),
     }
@@ -172,31 +174,47 @@ class SQLiteHNSWBackend(VectorBackend):
     # ------------------------------------------------------------------
 
     async def create_collection(
-        self, name: str, dim: int, distance_metric: str, description: Optional[str] = None
+        self, name: str, dim: int, distance_metric: str,
+        description: Optional[str] = None, user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         async with self._session_factory() as session:
             existing = await session.execute(select(_Collection).where(_Collection.name == name))
             if existing.scalar_one_or_none():
                 raise CollectionAlreadyExistsError(name)
-            col = _Collection(name=name, dim=dim, distance_metric=distance_metric, description=description)
+            col = _Collection(
+                name=name, dim=dim, distance_metric=distance_metric,
+                description=description, user_id=user_id,
+            )
             session.add(col)
             await session.commit()
             await session.refresh(col)
             self._index_manager.get_or_create(col.name, col.dim, col.distance_metric)
             return _col_to_dict(col, 0)
 
-    async def get_collection(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_collection(self, name: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(select(_Collection).where(_Collection.name == name))
+            stmt = select(_Collection).where(_Collection.name == name)
+            if user_id is not None:
+                from sqlalchemy import or_
+                stmt = stmt.where(
+                    or_(_Collection.user_id == user_id, _Collection.user_id.is_(None))
+                )
+            result = await session.execute(stmt)
             col = result.scalar_one_or_none()
             if not col:
                 return None
             count = await self._vec_count(session, col.id)
             return _col_to_dict(col, count)
 
-    async def list_collections(self) -> List[Dict[str, Any]]:
+    async def list_collections(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(select(_Collection))
+            stmt = select(_Collection)
+            if user_id is not None:
+                from sqlalchemy import or_
+                stmt = stmt.where(
+                    or_(_Collection.user_id == user_id, _Collection.user_id.is_(None))
+                )
+            result = await session.execute(stmt)
             cols = result.scalars().all()
             out = []
             for col in cols:
@@ -204,9 +222,12 @@ class SQLiteHNSWBackend(VectorBackend):
                 out.append(_col_to_dict(col, count))
             return out
 
-    async def delete_collection(self, name: str) -> None:
+    async def delete_collection(self, name: str, user_id: Optional[int] = None) -> None:
         async with self._session_factory() as session:
-            result = await session.execute(select(_Collection).where(_Collection.name == name))
+            stmt = select(_Collection).where(_Collection.name == name)
+            if user_id is not None:
+                stmt = stmt.where(_Collection.user_id == user_id)
+            result = await session.execute(stmt)
             col = result.scalar_one_or_none()
             if not col:
                 raise CollectionNotFoundError(name)
@@ -666,9 +687,14 @@ class SQLiteHNSWBackend(VectorBackend):
     # Extensions
     # ------------------------------------------------------------------
 
-    async def update_collection(self, name: str, description: Optional[str]) -> Optional[Dict[str, Any]]:
+    async def update_collection(
+        self, name: str, description: Optional[str], user_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(select(_Collection).where(_Collection.name == name))
+            stmt = select(_Collection).where(_Collection.name == name)
+            if user_id is not None:
+                stmt = stmt.where(_Collection.user_id == user_id)
+            result = await session.execute(stmt)
             col = result.scalar_one_or_none()
             if not col:
                 return None

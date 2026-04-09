@@ -17,12 +17,17 @@ description: Insert or update multiple vectors in a single request.
 
   Each item:
   - `external_id` (string, required) — unique ID within the collection
-  - `vector` (number[], required) — must match collection dimension
+  - `vector` (number[]) — must match collection dimension. Either `vector` or `text` must be provided per item.
+  - `text` (string) — plain text to embed. The backend generates the vector. Either `text` or `vector` must be provided. If both are given, `vector` takes precedence.
   - `metadata` (object, optional) — JSON metadata
 </ParamField>
 
+<ParamField body="include_timing" type="boolean" default="false">
+  When `true`, the response includes a `timing_ms` object with `embedding_ms`, `storage_ms`, and `total_ms` breakdowns.
+</ParamField>
+
 <RequestExample>
-```bash cURL
+```bash cURL (with vectors)
 curl -X POST http://localhost:8000/v1/collections/articles/bulk_upsert \
   -H "x-api-key: your-key" \
   -H "Content-Type: application/json" \
@@ -41,6 +46,27 @@ curl -X POST http://localhost:8000/v1/collections/articles/bulk_upsert \
     ]
   }'
 ```
+
+```bash cURL (with text)
+curl -X POST http://localhost:8000/v1/collections/articles/bulk_upsert \
+  -H "x-api-key: your-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      {
+        "external_id": "doc-1",
+        "text": "Introduction to vector databases",
+        "metadata": {"title": "First article"}
+      },
+      {
+        "external_id": "doc-2",
+        "text": "Advanced similarity search techniques",
+        "metadata": {"title": "Second article"}
+      }
+    ],
+    "include_timing": true
+  }'
+```
 </RequestExample>
 
 <ResponseExample>
@@ -52,6 +78,24 @@ curl -X POST http://localhost:8000/v1/collections/articles/bulk_upsert \
       { "external_id": "doc-1", "status": "inserted" },
       { "external_id": "doc-2", "status": "inserted" }
     ]
+  },
+  "error": null
+}
+```
+
+```json With timing
+{
+  "status": "success",
+  "data": {
+    "results": [
+      { "external_id": "doc-1", "status": "inserted" },
+      { "external_id": "doc-2", "status": "inserted" }
+    ],
+    "timing_ms": {
+      "embedding_ms": 24.8,
+      "storage_ms": 5.2,
+      "total_ms": 30.0
+    }
   },
   "error": null
 }
