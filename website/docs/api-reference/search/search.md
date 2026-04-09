@@ -26,12 +26,16 @@ Content-Type: application/json
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `vector` | float[] | ✅ | Query vector. Length must match collection dimension. |
+| `vector` | float[] | — | Query vector. Length must match collection dimension. Either `vector` or `text` must be provided. If both are given, `vector` takes precedence. |
+| `text` | string | — | Plain text query. The backend generates a vector using the configured embedding model. Either `text` or `vector` must be provided. If both are given, `vector` takes precedence. |
 | `k` | integer | — | Number of results to return. Default: `10` |
 | `offset` | integer | — | Pagination offset. Default: `0` |
 | `filters` | object | — | Metadata key-value filters. Only returns vectors matching all filters. |
+| `include_timing` | boolean | — | Default: `false`. When `true`, the response includes a `timing_ms` object with `embedding_ms`, `search_ms`, and `total_ms` breakdowns. |
 
-## Example
+## Examples
+
+**With vector:**
 
 ```bash
 curl -X POST http://localhost:8000/v1/collections/articles/search \
@@ -44,6 +48,20 @@ curl -X POST http://localhost:8000/v1/collections/articles/search \
   }'
 ```
 
+**With text and timing:**
+
+```bash
+curl -X POST http://localhost:8000/v1/collections/articles/search \
+  -H "x-api-key: test-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "getting started with machine learning",
+    "k": 5,
+    "filters": {"author": "Alice"},
+    "include_timing": true
+  }'
+```
+
 ## Response
 
 ```json
@@ -52,21 +70,49 @@ curl -X POST http://localhost:8000/v1/collections/articles/search \
   "data": {
     "results": [
       {
-        "external_id": "doc-1",
+        "external_id": "doc-42",
         "score": 0.9823,
-        "metadata": {"title": "Hello World", "author": "Alice"}
+        "metadata": {"title": "Getting started", "author": "Alice"}
       },
       {
-        "external_id": "doc-5",
+        "external_id": "doc-17",
         "score": 0.9541,
-        "metadata": {"title": "Another Article", "author": "Alice"}
+        "metadata": {"title": "Advanced topics", "author": "Alice"}
       }
     ],
-    "collection": "articles",
-    "k": 5
+    "total_count": 150,
+    "k": 5,
+    "offset": 0
   }
 }
 ```
+
+**With timing:**
+
+```json
+{
+  "status": "success",
+  "data": {
+    "results": [
+      {
+        "external_id": "doc-42",
+        "score": 0.9823,
+        "metadata": {"title": "Getting started", "author": "Alice"}
+      }
+    ],
+    "total_count": 150,
+    "k": 5,
+    "offset": 0,
+    "timing_ms": {
+      "embedding_ms": 11.2,
+      "search_ms": 2.8,
+      "total_ms": 14.0
+    }
+  }
+}
+```
+
+`total_count` returns the total number of vectors in the collection (before filtering). Use it with `offset` and `k` for pagination. Returns `-1` if the backend does not support counting.
 
 ## Errors
 

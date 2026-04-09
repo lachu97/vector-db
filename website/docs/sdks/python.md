@@ -48,18 +48,44 @@ async with AsyncVectorDBClient(base_url="http://localhost:8000", api_key="your-k
 
 ---
 
+## Auth (Registration & Login)
+
+```python
+# Register a new user (no api_key needed for this call)
+result = client.auth.register("user@example.com", "securepassword")
+api_key = result["api_key"]["key"]  # Use this key for subsequent calls
+
+# Login
+result = client.auth.login("user@example.com", "securepassword")
+api_key = result["api_key"]["key"]
+```
+
+---
+
 ## Collections
 
 ```python
-# Create
-col = client.collections.create("articles", dim=384, distance_metric="cosine")
+# Create (with optional description)
+col = client.collections.create("articles", dim=384, distance_metric="cosine", description="Blog article embeddings")
 
 # List
 cols = client.collections.list()
 
 # Get
 col = client.collections.get("articles")
-print(col.name, col.dim, col.vector_count)
+print(col.name, col.dim, col.vector_count, col.description)
+
+# Update description
+col = client.collections.update("articles", "Updated description")
+
+# Clear description
+col = client.collections.update("articles", None)
+
+# Export all vectors
+export = client.collections.export("articles", limit=5000)
+print(export.count)  # number of vectors exported
+for v in export.vectors:
+    print(v.external_id, len(v.vector), v.metadata)
 
 # Delete
 client.collections.delete("articles")
@@ -68,7 +94,7 @@ client.collections.delete("articles")
 ## Vectors
 
 ```python
-# Upsert
+# Upsert with a raw vector
 result = client.vectors.upsert(
     collection="articles",
     external_id="doc-1",
@@ -77,13 +103,31 @@ result = client.vectors.upsert(
 )
 print(result.status)  # "inserted" or "updated"
 
-# Bulk upsert
+# Upsert with raw text — the server embeds it for you
+result = client.vectors.upsert(
+    collection="articles",
+    external_id="doc-2",
+    text="An intro to vector databases",
+    metadata={"title": "Intro"},
+)
+
+# Opt into timing metrics (embedding_ms, storage_ms, total_ms)
+result = client.vectors.upsert(
+    collection="articles",
+    external_id="doc-3",
+    text="Another article",
+    include_timing=True,
+)
+print(result.timing_ms.embedding_ms, result.timing_ms.total_ms)
+
+# Bulk upsert — mix vectors and text in the same batch
 items = [
-    {"external_id": f"doc-{i}", "vector": vectors[i], "metadata": {"i": i}}
-    for i in range(100)
+    {"external_id": "doc-a", "vector": vectors[0], "metadata": {"i": 0}},
+    {"external_id": "doc-b", "text": "Second article body"},
 ]
-bulk = client.vectors.bulk_upsert("articles", items)
+bulk = client.vectors.bulk_upsert("articles", items, include_timing=True)
 print(len(bulk.inserted), len(bulk.updated))
+print(bulk.timing_ms.embedding_ms, bulk.timing_ms.storage_ms)
 
 # Delete
 client.vectors.delete("articles", "doc-1")
@@ -95,7 +139,7 @@ client.vectors.delete_batch("articles", ["doc-1", "doc-2", "doc-3"])
 ## Search
 
 ```python
-# KNN search
+# KNN search with a raw vector (returns total_count for pagination)
 results = client.search.search(
     collection="articles",
     vector=query_vector,
@@ -103,8 +147,25 @@ results = client.search.search(
     offset=0,
     filters={"tags": "ml"},  # optional metadata filter
 )
+print(f"Showing {len(results)} of {results.total_count} total vectors")
 for r in results:
     print(r.external_id, r.score, r.metadata)
+
+# Search with plain text — the server embeds the query for you (cached)
+results = client.search.search(
+    collection="articles",
+    text="machine learning tutorials",
+    k=10,
+)
+
+# Opt into timing metrics (embedding_ms, search_ms, total_ms)
+results = client.search.search(
+    collection="articles",
+    text="deep learning",
+    k=10,
+    include_timing=True,
+)
+print(results.timing_ms.embedding_ms, results.timing_ms.search_ms)
 
 # Recommendations (similar to a stored vector)
 recs = client.search.recommend("articles", external_id="doc-1", k=5)
@@ -112,21 +173,102 @@ recs = client.search.recommend("articles", external_id="doc-1", k=5)
 # Cosine similarity between two stored vectors
 score = client.search.similarity("articles", id1="doc-1", id2="doc-2")
 
-# Rerank a candidate set
+# Rerank a candidate set with a vector...
 reranked = client.search.rerank(
     collection="articles",
     query_vector=query_vector,
     candidates=["doc-1", "doc-2", "doc-3"],
 )
 
-# Hybrid search
+# ...or rerank with text
+reranked = client.search.rerank(
+    collection="articles",
+    text="machine learning best practices",
+    candidates=["doc-1", "doc-2", "doc-3"],
+    include_timing=True,
+)
+print(reranked.timing_ms.embedding_ms)
+
+# Hybrid search — vector is now optional; backend auto-embeds query_text if omitted
 results = client.search.hybrid_search(
     collection="articles",
     query_text="machine learning",
-    vector=query_vector,
     k=10,
     alpha=0.7,
+    include_timing=True,
 )
+```
+
+## API Keys
+
+Manage API keys programmatically (requires admin role):
+
+```python
+# Create a key with optional expiry
+key = client.keys.create("production-app", role="readwrite", expires_in_days=90)
+print(key.key)  # only shown once — save it!
+
+# List all keys
+keys = client.keys.list()
+for k in keys:
+    print(k.id, k.name, k.role, k.is_active)
+
+# Get a single key
+key = client.keys.get(key_id=2)
+
+# Update name/role
+client.keys.update(key_id=2, name="renamed-key", role="readonly")
+
+# Revoke / Restore
+client.keys.revoke(key_id=2)
+client.keys.restore(key_id=2)
+
+# Rotate (regenerate key value)
+rotated = client.keys.rotate(key_id=2)
+print(rotated.key)  # new key value — shown once
+
+# Usage stats for a key
+usage = client.keys.get_usage(key_id=2)
+print(usage.total_requests, usage.last_24h, usage.by_endpoint)
+
+# Usage summary across all keys
+summary = client.keys.get_usage_summary()
+print(summary["overall"]["total_requests"])
+
+# Delete
+client.keys.delete(key_id=2)
+```
+
+## RAG (Document Upload & Query)
+
+```python
+# Upload a text document to a collection
+result = client.documents.upload(
+    collection_name="articles",
+    file_path="/path/to/document.txt",
+)
+print(result.document_id)    # UUID of the uploaded document
+print(result.chunks_created) # number of chunks generated
+
+# Upload with timing metrics (embedding_ms, storage_ms, total_ms)
+result = client.documents.upload(
+    collection_name="articles",
+    file_path="/path/to/document.txt",
+    include_timing=True,
+)
+print(result.timing_ms.total_ms)
+
+# Query a collection with natural language
+results = client.query.query(
+    query="How does vector indexing work?",
+    collection_name="articles",
+    top_k=5,
+    filters={"source": "docs"},
+    include_timing=True,
+)
+print(results.timing_ms.embedding_ms, results.timing_ms.search_ms)
+for r in results:
+    print(r.text, r.score, r.metadata, r.external_id)
 ```
 
 ## Error Handling

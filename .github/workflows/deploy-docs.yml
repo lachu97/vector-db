@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'website/**'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:

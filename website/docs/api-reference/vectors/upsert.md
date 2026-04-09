@@ -27,10 +27,14 @@ Content-Type: application/json
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `external_id` | string | ✅ | Unique identifier for this vector within the collection |
-| `vector` | float[] | ✅ | Array of floats. Length must match the collection's `dim`. |
+| `vector` | float[] | — | Array of floats. Length must match the collection's `dim`. Either `vector` or `text` must be provided. If both are given, `vector` takes precedence. |
+| `text` | string | — | Plain text to embed. The backend generates a vector using the configured embedding model. Either `text` or `vector` must be provided. If both are given, `vector` takes precedence. |
 | `metadata` | object | — | Arbitrary JSON metadata attached to the vector |
+| `include_timing` | boolean | — | Default: `false`. When `true`, the response includes a `timing_ms` object with `embedding_ms`, `storage_ms`, and `total_ms` breakdowns. |
 
-## Example
+## Examples
+
+**With vector:**
 
 ```bash
 curl -X POST http://localhost:8000/v1/collections/articles/upsert \
@@ -43,6 +47,20 @@ curl -X POST http://localhost:8000/v1/collections/articles/upsert \
   }'
 ```
 
+**With text and timing:**
+
+```bash
+curl -X POST http://localhost:8000/v1/collections/articles/upsert \
+  -H "x-api-key: test-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "external_id": "doc-1",
+    "text": "Getting started with vector databases",
+    "metadata": {"title": "Getting started", "author": "Alice"},
+    "include_timing": true
+  }'
+```
+
 ## Response
 
 ```json
@@ -51,6 +69,23 @@ curl -X POST http://localhost:8000/v1/collections/articles/upsert \
   "data": {
     "external_id": "doc-1",
     "status": "inserted"
+  }
+}
+```
+
+**With timing:**
+
+```json
+{
+  "status": "success",
+  "data": {
+    "external_id": "doc-1",
+    "status": "inserted",
+    "timing_ms": {
+      "embedding_ms": 12.4,
+      "storage_ms": 3.1,
+      "total_ms": 15.5
+    }
   }
 }
 ```
