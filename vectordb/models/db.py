@@ -12,7 +12,7 @@ settings = get_settings()
 ENGINE = create_engine(
     settings.db_url,
     connect_args={"check_same_thread": False},
-    pool_size=5,
+    pool_size=10,
     pool_pre_ping=True,
 )
 SessionLocal = sessionmaker(bind=ENGINE, autoflush=False, autocommit=False)
@@ -66,6 +66,7 @@ class KeyUsageLog(Base):
     endpoint = Column(String, nullable=False)
     method = Column(String, nullable=False)
     status_code = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=True, index=True)  # denormalized for fast per-user queries
     timestamp = Column(DateTime, server_default=func.now(), index=True)
 
 
@@ -74,9 +75,12 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
+    tier = Column(String, nullable=False, default="free")  # free, starter, pro, scale
     created_at = Column(DateTime, server_default=func.now())
+    last_active_at = Column(DateTime, nullable=True)  # updated on every authed request
 
     api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
+    usage_summaries = relationship("UserUsageSummary", back_populates="user", cascade="all, delete-orphan")
 
 
 class ApiKey(Base):
@@ -92,6 +96,19 @@ class ApiKey(Base):
     last_used_at = Column(DateTime, nullable=True)     # updated on every authenticated request
 
     user = relationship("User", back_populates="api_keys")
+
+
+class UserUsageSummary(Base):
+    __tablename__ = "user_usage_summary"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    period = Column(String, nullable=False)  # "2026-04" (YYYY-MM)
+    request_count = Column(Integer, nullable=False, default=0)
+    vector_count = Column(Integer, nullable=False, default=0)
+    # UniqueConstraint creates an implicit index on (user_id, period)
+    __table_args__ = (UniqueConstraint("user_id", "period", name="uq_user_usage_period"),)
+
+    user = relationship("User", back_populates="usage_summaries")
 
 
 def init_db():

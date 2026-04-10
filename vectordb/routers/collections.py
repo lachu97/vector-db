@@ -1,6 +1,7 @@
 # vectordb/routers/collections.py
 import structlog
 from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
 
 from vectordb.auth import ApiKeyInfo, require_admin, require_readonly, require_readwrite
 from vectordb.backends import get_backend
@@ -10,7 +11,9 @@ from vectordb.backends.base import (
     VectorBackend,
 )
 from vectordb.config import get_settings
+from vectordb.models.db import get_db
 from vectordb.models.schemas import CreateCollectionRequest, UpdateCollectionRequest
+from vectordb.quota import adjust_vector_count
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -103,9 +106,15 @@ async def delete_collection(
     name: str,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_admin),
+    db: Session = Depends(get_db),
 ):
+    # Get vector count BEFORE deleting so we can decrement the user's usage
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    vec_count = col.get("vector_count", 0) if col else 0
     try:
         await backend.delete_collection(name, user_id=auth.user_id)
+        if vec_count > 0:
+            adjust_vector_count(db, auth.user_id, -vec_count)
         return success_response({"status": "deleted", "name": name})
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{name}' not found")

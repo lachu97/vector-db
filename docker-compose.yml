@@ -14,6 +14,7 @@ services:
       VECTOR_DIM: ${VECTOR_DIM:-384}
       INDEX_PATH: ${INDEX_PATH:-data/index.bin}
       MAX_ELEMENTS: ${MAX_ELEMENTS:-10000}
+      BYPASS_EMAILS: ${BYPASS_EMAILS:-}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

@@ -66,6 +66,7 @@ def _format_user_response(user: User, key_row: ApiKey) -> dict:
         "user": {
             "id": user.id,
             "email": user.email,
+            "tier": user.tier,
             "created_at": str(user.created_at),
         },
         "api_key": {

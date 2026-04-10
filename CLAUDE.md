@@ -133,6 +133,7 @@ All endpoints (except `/`) require `x-api-key` header.
   - Python SDK: `sdk/python/vectordb_client/` — update `_resources.py`, `_async_resources.py`, `models.py`, and bump version in `pyproject.toml` + `__init__.py`
   - TypeScript SDK: `sdk/typescript/src/` — update `types.ts`, the relevant resource file under `resources/`, and bump version in `package.json`
   - Add tests for new SDK methods in `tests/test_phase6_python_sdk.py` and `sdk/typescript/src/__tests__/`
+- **Migration verification rule:** After ANY schema change, you MUST run `alembic upgrade head` AND verify the columns actually exist in the database using `PRAGMA table_info`. SQLite `batch_alter_table` silently fails — never trust `alembic current` alone. If columns are missing, add them manually with `ALTER TABLE ADD COLUMN`. This is a recurring issue — do not skip verification.
 - **Frontend sync rule:** Any new API endpoint or changed behavior MUST be documented in `vector-db-web/CLAUDE.md` (Backend Changelog section) so the frontend Claude can implement it. Include: endpoint path, method, request body, response shape, and required UI changes.
 - **Docs sync rule:** Any new API endpoint, changed request/response shape, or new feature MUST be reflected in the documentation before the work is considered done:
   - API reference: `docs/api-reference/` — add or update the relevant `.mdx` file with params, request/response examples
@@ -157,6 +158,36 @@ pytest tests/ -v
 ```
 
 ## Migrations
+
+### ⚠️ CRITICAL: SQLite Migration Verification Rule
+
+**After every schema change (adding columns, creating tables), you MUST verify the migration actually applied to the database.** SQLite's `batch_alter_table` operations can fail silently — Alembic marks the migration as applied in `alembic_version` but the actual ALTER TABLE may not execute.
+
+**After running `alembic upgrade head`, ALWAYS verify with:**
+```bash
+python -c "
+import sqlite3
+conn = sqlite3.connect('vectors.db')
+for table in ['users', 'api_keys', 'collections', 'key_usage_logs', 'user_usage_summary']:
+    cols = [r[1] for r in conn.execute(f'PRAGMA table_info({table})')]
+    print(f'{table}: {cols}')
+"
+```
+
+**If a column is missing after migration:**
+```bash
+# Manually add it (SQLite supports basic ALTER TABLE ADD COLUMN)
+python -c "
+import sqlite3
+conn = sqlite3.connect('vectors.db')
+conn.execute('ALTER TABLE <table> ADD COLUMN <column> <TYPE> <DEFAULT>')
+conn.commit()
+"
+```
+
+**This has bitten us multiple times:** `tier`, `last_active_at` on `users`, and `user_id` on `key_usage_logs` all required manual fixes because `batch_alter_table` silently failed while Alembic recorded the migration as complete.
+
+### Commands
 ```bash
 # Generate a new migration after model changes
 alembic revision --autogenerate -m "description of change"

@@ -1,4 +1,5 @@
 # vectordb/app.py
+import asyncio
 import traceback
 from contextlib import asynccontextmanager
 
@@ -13,7 +14,7 @@ from vectordb.models.db import init_db, ENGINE
 from vectordb.metrics import MetricsMiddleware
 from vectordb.middleware import RateLimitMiddleware
 from vectordb.services.vector_service import error_response
-from vectordb.routers import auth, collections, vectors, search, keys, observability, documents, query
+from vectordb.routers import auth, collections, vectors, search, keys, observability, documents, query, usage
 from vectordb.tracing import setup_tracing
 
 # ------------------------------------------------------------------
@@ -68,6 +69,10 @@ async def lifespan(app: FastAPI):
         from vectordb.services.embedding_service import initialize_provider
         initialize_provider()
 
+        # Start inactive user cleanup background task
+        from vectordb.cleanup import cleanup_loop
+        asyncio.create_task(cleanup_loop())
+
         logger.info("app_startup_complete")
     except Exception as e:
         logger.error("startup_failed", error=str(e), traceback=traceback.format_exc())
@@ -109,6 +114,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(MetricsMiddleware)
+# Note: Per-user RPM rate limiting is handled by quota.check_rpm() in auth.py.
+# The middleware provides a global per-key safety net for unauthenticated/burst traffic.
 app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_per_minute)
 
 # ------------------------------------------------------------------
@@ -119,6 +126,7 @@ app.include_router(collections.router)
 app.include_router(vectors.router)
 app.include_router(search.router)
 app.include_router(keys.router)
+app.include_router(usage.router)
 app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(observability.router)

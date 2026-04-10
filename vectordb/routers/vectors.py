@@ -1,8 +1,11 @@
 # vectordb/routers/vectors.py
 import time
+from datetime import datetime, timezone
 
 import structlog
 from fastapi import APIRouter, Depends
+
+from sqlalchemy.orm import Session
 
 from vectordb.auth import ApiKeyInfo, require_readwrite
 from vectordb.backends import get_backend
@@ -13,7 +16,9 @@ from vectordb.backends.base import (
     VectorBackend,
 )
 from vectordb.config import get_settings
+from vectordb.models.db import get_db
 from vectordb.models.schemas import BulkUpsertRequest, BatchDeleteRequest, UpsertRequest
+from vectordb.quota import adjust_vector_count
 from vectordb.services.embedding_service import embed_text, embed_batch
 from vectordb.services.vector_service import error_response, success_response
 
@@ -61,6 +66,7 @@ async def upsert_vector_in_collection(
     item: UpsertRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     t_start = time.perf_counter()
     access_err = await _check_collection_access(backend, collection_name, auth.user_id)
@@ -97,6 +103,10 @@ async def upsert_vector_in_collection(
         timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
         logger.debug("upsert_timing", **timing, endpoint="upsert")
 
+        # Track vector count: only increment on new inserts
+        if result.get("status") == "inserted":
+            adjust_vector_count(db, auth.user_id, +1)
+
         if item.include_timing:
             result["timing_ms"] = timing
         return success_response(result)
@@ -112,6 +122,7 @@ async def bulk_upsert_in_collection(
     req: BulkUpsertRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     t_start = time.perf_counter()
     access_err = await _check_collection_access(backend, collection_name, auth.user_id)
@@ -120,6 +131,25 @@ async def bulk_upsert_in_collection(
     settings = _settings()
     if len(req.items) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
+
+    # Bulk size + vector quota pre-check
+    from vectordb.quota import MAX_BULK_SIZE, TIER_LIMITS, is_bypass_user as _is_bypass
+    from vectordb.models.db import User, UserUsageSummary
+    incoming = len(req.items)
+    if auth.user_id:
+        user = db.query(User).filter_by(id=auth.user_id).first()
+        bypass = user and _is_bypass(user)
+        if not bypass and incoming > MAX_BULK_SIZE:
+            return error_response(400, f"Batch size {incoming} exceeds maximum {MAX_BULK_SIZE}")
+        if user and not bypass:
+            limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
+            period = datetime.now(timezone.utc).strftime("%Y-%m")
+            summary = db.query(UserUsageSummary).filter_by(
+                user_id=auth.user_id, period=period).first()
+            current = summary.vector_count if summary else 0
+            if current + incoming > limits["max_vectors"]:
+                return error_response(429, f"Bulk upsert would exceed vector limit ({current + incoming} > {limits['max_vectors']})")
+
     for it in req.items:
         if it.metadata and len(it.metadata) > settings.max_metadata_size:
             return error_response(
@@ -157,6 +187,11 @@ async def bulk_upsert_in_collection(
         storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
+        # Track vector count: only count newly inserted vectors
+        inserted_count = sum(1 for r in results if r.get("status") == "inserted")
+        if inserted_count > 0:
+            adjust_vector_count(db, auth.user_id, +inserted_count)
+
         timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
         logger.debug("bulk_upsert_timing", **timing, endpoint="bulk_upsert", count=len(req.items))
 
@@ -176,12 +211,14 @@ async def delete_vector_in_collection(
     external_id: str,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     access_err = await _check_collection_access(backend, collection_name, auth.user_id)
     if access_err:
         return access_err
     try:
         result = await backend.delete_vector(collection_name, external_id)
+        adjust_vector_count(db, auth.user_id, -1)
         return success_response(result)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
@@ -195,6 +232,7 @@ async def batch_delete_in_collection(
     req: BatchDeleteRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     access_err = await _check_collection_access(backend, collection_name, auth.user_id)
     if access_err:
@@ -204,6 +242,9 @@ async def batch_delete_in_collection(
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
     try:
         result = await backend.batch_delete(collection_name, req.external_ids)
+        deleted_count = result.get("deleted_count", 0) if isinstance(result, dict) else len(req.external_ids)
+        if deleted_count > 0:
+            adjust_vector_count(db, auth.user_id, -deleted_count)
         return success_response(result)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
@@ -218,6 +259,7 @@ async def upsert_vector_legacy(
     item: UpsertRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     t_start = time.perf_counter()
     await _ensure_default(backend)
@@ -252,6 +294,9 @@ async def upsert_vector_legacy(
         timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
         logger.debug("upsert_timing", **timing, endpoint="upsert_legacy")
 
+        if result.get("status") == "inserted":
+            adjust_vector_count(db, auth.user_id, +1)
+
         if item.include_timing:
             result["timing_ms"] = timing
         return success_response(result)
@@ -264,12 +309,31 @@ async def bulk_upsert_legacy(
     req: BulkUpsertRequest,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     t_start = time.perf_counter()
     settings = _settings()
     if len(req.items) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
     await _ensure_default(backend)
+
+    # Bulk size + vector quota pre-check
+    from vectordb.quota import MAX_BULK_SIZE, TIER_LIMITS, is_bypass_user as _is_bypass
+    from vectordb.models.db import User, UserUsageSummary
+    incoming = len(req.items)
+    if auth.user_id:
+        user = db.query(User).filter_by(id=auth.user_id).first()
+        bypass = user and _is_bypass(user)
+        if not bypass and incoming > MAX_BULK_SIZE:
+            return error_response(400, f"Batch size {incoming} exceeds maximum {MAX_BULK_SIZE}")
+        if user and not bypass:
+            limits = TIER_LIMITS.get(user.tier, TIER_LIMITS["free"])
+            period = datetime.now(timezone.utc).strftime("%Y-%m")
+            summary = db.query(UserUsageSummary).filter_by(
+                user_id=auth.user_id, period=period).first()
+            current = summary.vector_count if summary else 0
+            if current + incoming > limits["max_vectors"]:
+                return error_response(429, f"Bulk upsert would exceed vector limit ({current + incoming} > {limits['max_vectors']})")
 
     # Batch-embed items that have text but no vector
     embedding_ms = 0.0
@@ -302,6 +366,11 @@ async def bulk_upsert_legacy(
         storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
+        # Track vector count: only count newly inserted vectors
+        inserted_count = sum(1 for r in results if r.get("status") == "inserted")
+        if inserted_count > 0:
+            adjust_vector_count(db, auth.user_id, +inserted_count)
+
         timing = {"embedding_ms": embedding_ms, "storage_ms": storage_ms, "total_ms": total_ms}
         logger.debug("bulk_upsert_timing", **timing, endpoint="bulk_upsert_legacy", count=len(req.items))
 
@@ -318,10 +387,12 @@ async def delete_vector_legacy(
     external_id: str,
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readwrite),
+    db: Session = Depends(get_db),
 ):
     await _ensure_default(backend)
     try:
         result = await backend.delete_vector(DEFAULT_COLLECTION, external_id)
+        adjust_vector_count(db, auth.user_id, -1)
         return success_response(result)
     except VectorNotFoundError:
         return error_response(404, "Not found")
