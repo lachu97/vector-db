@@ -1,6 +1,7 @@
 # vectordb/config.py
 from typing import List
 from pydantic_settings import BaseSettings
+from pydantic import Field
 
 
 class Settings(BaseSettings):
@@ -11,7 +12,10 @@ class Settings(BaseSettings):
     ef_construction: int = 200
     m: int = 16
     ef_query: int = 30
-    db_url: str = "sqlite:///./vectors.db"
+    db_url: str = Field(
+        default="sqlite:///./vectors.db",
+        alias="DATABASE_URL"
+    )
     port: int = 8000
     workers: int = 4
 

@@ -1,4 +1,5 @@
 # vectordb/app.py
+
 import asyncio
 import traceback
 from contextlib import asynccontextmanager
@@ -10,27 +11,30 @@ from fastapi.responses import JSONResponse
 
 from vectordb.config import get_settings
 from vectordb.logging_config import configure_logging
-from vectordb.models.db import init_db, ENGINE
+from vectordb.models.db import init_db
 from vectordb.metrics import MetricsMiddleware
 from vectordb.middleware import RateLimitMiddleware
 from vectordb.services.vector_service import error_response
-from vectordb.routers import auth, collections, vectors, search, keys, observability, documents, query, usage
+from vectordb.routers import (
+    auth, collections, vectors, search,
+    keys, observability, documents, query, usage
+)
 from vectordb.tracing import setup_tracing
-
+from fastapi import FastAPI
 # ------------------------------------------------------------------
 # Settings & logging
 # ------------------------------------------------------------------
 settings = get_settings()
-configure_logging(log_format=settings.log_format, log_level=settings.log_level)
+configure_logging(
+    log_format=settings.log_format,
+    log_level=settings.log_level
+)
 logger = structlog.get_logger(__name__)
-
 
 # ------------------------------------------------------------------
 # Backend factory
 # ------------------------------------------------------------------
-
 def _create_backend(settings):
-    """Instantiate the correct VectorBackend based on STORAGE_BACKEND."""
     if settings.storage_backend == "postgres":
         from vectordb.backends.postgres_pgvector import PostgresVectorBackend
         logger.info("backend_selected", type="postgres+pgvector")
@@ -42,69 +46,76 @@ def _create_backend(settings):
 
 
 def _wrap_cache(backend, settings):
-    """Optionally wrap the backend with a Redis caching layer."""
     if not settings.redis_url:
         return backend
-    from vectordb.cache import CachingBackend
-    logger.info("cache_enabled", redis_url=settings.redis_url, ttl=settings.cache_ttl)
-    return CachingBackend(backend, settings.redis_url, settings.cache_ttl)
 
+    from vectordb.cache import CachingBackend
+    logger.info(
+        "cache_enabled",
+        redis_url=settings.redis_url,
+        ttl=settings.cache_ttl
+    )
+    return CachingBackend(
+        backend,
+        settings.redis_url,
+        settings.cache_ttl
+    )
 
 # ------------------------------------------------------------------
 # Lifespan
 # ------------------------------------------------------------------
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     try:
-        # Sync init_db creates api_keys + legacy tables (used by auth)
         init_db()
         observability.reset_start_time()
 
-        # Start the async backend
         await app.state.backend.startup()
 
-        # Initialize embedding provider (eager load + warmup)
         from vectordb.services.embedding_service import initialize_provider
         initialize_provider()
 
-        # Start inactive user cleanup background task
         from vectordb.cleanup import cleanup_loop
         asyncio.create_task(cleanup_loop())
 
         logger.info("app_startup_complete")
+
     except Exception as e:
-        logger.error("startup_failed", error=str(e), traceback=traceback.format_exc())
+        logger.error(
+            "startup_failed",
+            error=str(e),
+            traceback=traceback.format_exc()
+        )
 
     yield
 
-    # Shutdown
     try:
         await app.state.backend.shutdown()
         logger.info("app_shutdown_complete")
     except Exception as e:
         logger.error("shutdown_failed", error=str(e))
 
-
 # ------------------------------------------------------------------
 # App
 # ------------------------------------------------------------------
+app = FastAPI(
+    title="Vector DB",
+    version="3.0.0",
+    lifespan=lifespan
+)
 
-app = FastAPI(title="Vector DB", version="3.0.0", lifespan=lifespan)
-
-# Wire the backend into app state before lifespan runs
+# backend must exist before routers
 _backend = _create_backend(settings)
 _backend = _wrap_cache(_backend, settings)
 app.state.backend = _backend
 
 # ------------------------------------------------------------------
-# OpenTelemetry
+# Tracing
 # ------------------------------------------------------------------
-setup_tracing(app, ENGINE, settings)
+setup_tracing(app, None, settings)
 
 # ------------------------------------------------------------------
-# Middleware (last-added = runs first)
+# Middleware
 # ------------------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
@@ -113,10 +124,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 app.add_middleware(MetricsMiddleware)
-# Note: Per-user RPM rate limiting is handled by quota.check_rpm() in auth.py.
-# The middleware provides a global per-key safety net for unauthenticated/burst traffic.
-app.add_middleware(RateLimitMiddleware, requests_per_minute=settings.rate_limit_per_minute)
+
+app.add_middleware(
+    RateLimitMiddleware,
+    requests_per_minute=settings.rate_limit_per_minute
+)
 
 # ------------------------------------------------------------------
 # Routers
@@ -131,9 +145,8 @@ app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(observability.router)
 
-
 # ------------------------------------------------------------------
-# Root (no auth)
+# Root
 # ------------------------------------------------------------------
 @app.get("/")
 def root():
@@ -142,30 +155,23 @@ def root():
         "docs": "/docs",
         "backend": settings.storage_backend,
         "cache": "redis" if settings.redis_url else "none",
-        "endpoints": [
-            "/v1/collections",
-            "/v1/collections/{name}/upsert",
-            "/v1/collections/{name}/bulk_upsert",
-            "/v1/collections/{name}/search",
-            "/v1/collections/{name}/delete/{id}",
-            "/v1/collections/{name}/delete_batch",
-            "/v1/collections/{name}/recommend/{id}",
-            "/v1/collections/{name}/similarity",
-            "/v1/collections/{name}/rerank",
-            "/v1/collections/{name}/hybrid_search",
-            "/v1/admin/keys",
-            "/v1/health",
-            "/metrics",
-        ],
     }
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
 # ------------------------------------------------------------------
 # Global exception handler
 # ------------------------------------------------------------------
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error("unhandled_exception", error=str(exc), path=str(request.url.path))
-    return JSONResponse(status_code=500, content=error_response(500, str(exc)))
+    logger.error(
+        "unhandled_exception",
+        error=str(exc),
+        path=str(request.url.path)
+    )
+    return JSONResponse(
+        status_code=500,
+        content=error_response(500, str(exc))
+    )
