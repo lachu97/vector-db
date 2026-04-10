@@ -62,13 +62,31 @@ def _wrap_cache(backend, settings):
     )
 
 # ------------------------------------------------------------------
-# Lifespan (SAFE VERSION)
+# App
+# ------------------------------------------------------------------
+app = FastAPI(title="Vector DB", version="3.0.0")
+
+# Create backend BEFORE startup
+_backend = _create_backend(settings)
+_backend = _wrap_cache(_backend, settings)
+app.state.backend = _backend  # type: ignore
+
+# ------------------------------------------------------------------
+# BACKGROUND STARTUP (NON-BLOCKING FIX)
+# ------------------------------------------------------------------
+async def start_backend_background():
+    try:
+        await app.state.backend.startup()
+        logger.info("backend_started")
+    except Exception as e:
+        logger.warning("backend_start_failed", error=str(e))
+
+# ------------------------------------------------------------------
+# Lifespan (FAST + SAFE)
 # ------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # -------- STARTUP (independent steps) --------
-
-    # DB (never block startup)
+    # DB (never block)
     try:
         init_db()
     except Exception as e:
@@ -80,13 +98,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("observability_failed", error=str(e))
 
-    # backend startup
-    try:
-        await app.state.backend.startup()
-    except Exception as e:
-        logger.warning("backend_start_failed", error=str(e))
+    # 🔥 CRITICAL: backend in background
+    asyncio.create_task(start_backend_background())
 
-    # embeddings
+    # embeddings (non-blocking)
     try:
         from vectordb.services.embedding_service import initialize_provider
         initialize_provider()
@@ -95,10 +110,9 @@ async def lifespan(app: FastAPI):
 
     logger.info("app_startup_complete")
 
-    # IMPORTANT: allow app to start no matter what
     yield
 
-    # -------- SHUTDOWN --------
+    # shutdown
     try:
         if hasattr(app.state, "backend"):
             result = app.state.backend.shutdown()
@@ -107,19 +121,9 @@ async def lifespan(app: FastAPI):
         logger.info("app_shutdown_complete")
     except Exception as e:
         logger.warning("shutdown_failed", error=str(e))
-# ------------------------------------------------------------------
-# App
-# ------------------------------------------------------------------
-app = FastAPI(
-    title="Vector DB",
-    version="3.0.0",
-    lifespan=lifespan
-)
 
-# Backend must exist BEFORE routers
-_backend = _create_backend(settings)
-_backend = _wrap_cache(_backend, settings)
-app.state.backend = _backend
+# attach lifespan
+app.router.lifespan_context = lifespan
 
 # ------------------------------------------------------------------
 # Tracing
