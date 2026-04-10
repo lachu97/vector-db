@@ -208,6 +208,8 @@ class SQLiteHNSWBackend(VectorBackend):
 
     async def list_collections(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         async with self._session_factory() as session:
+            from sqlalchemy import func as sa_func, outerjoin
+
             stmt = select(_Collection)
             if user_id is not None:
                 from sqlalchemy import or_
@@ -216,11 +218,22 @@ class SQLiteHNSWBackend(VectorBackend):
                 )
             result = await session.execute(stmt)
             cols = result.scalars().all()
-            out = []
-            for col in cols:
-                count = await self._vec_count(session, col.id)
-                out.append(_col_to_dict(col, count))
-            return out
+
+            if not cols:
+                return []
+
+            # Batch count: single GROUP BY query for all collection IDs
+            col_ids = [c.id for c in cols]
+            count_result = await session.execute(
+                select(
+                    _Vector.collection_id,
+                    sa_func.count(_Vector.internal_id),
+                ).where(_Vector.collection_id.in_(col_ids))
+                .group_by(_Vector.collection_id)
+            )
+            counts = dict(count_result.all())
+
+            return [_col_to_dict(col, counts.get(col.id, 0)) for col in cols]
 
     async def delete_collection(self, name: str, user_id: Optional[int] = None) -> None:
         async with self._session_factory() as session:
@@ -382,14 +395,17 @@ class SQLiteHNSWBackend(VectorBackend):
         not_found = []
 
         async with self._session_factory() as session:
-            for eid in external_ids:
-                result = await session.execute(
-                    select(_Vector).where(
-                        _Vector.collection_id == col.id,
-                        _Vector.external_id == eid,
-                    )
+            # Batch fetch all vectors in one query
+            result = await session.execute(
+                select(_Vector).where(
+                    _Vector.collection_id == col.id,
+                    _Vector.external_id.in_(external_ids),
                 )
-                row = result.scalar_one_or_none()
+            )
+            rows_by_eid = {r.external_id: r for r in result.scalars().all()}
+
+            for eid in external_ids:
+                row = rows_by_eid.get(eid)
                 if not row:
                     not_found.append(eid)
                     continue
@@ -429,25 +445,36 @@ class SQLiteHNSWBackend(VectorBackend):
             if filters:
                 fetch_k = min((k + offset) * FILTER_OVERSAMPLE, cur)
                 labels, distances = indexer.knn_query(q, k=fetch_k)
+
+                # Batch fetch all candidate rows in one query
+                int_ids = [int(lbl) for lbl in labels]
+                res = await session.execute(
+                    select(_Vector).where(
+                        _Vector.internal_id.in_(int_ids),
+                        _Vector.collection_id == col.id,
+                    )
+                )
+                rows_by_id = {r.internal_id: r for r in res.scalars().all()}
+
                 out = []
                 for lbl, dist in zip(labels, distances):
-                    res = await session.execute(
-                        select(_Vector).where(
-                            _Vector.internal_id == int(lbl),
-                            _Vector.collection_id == col.id,
-                        )
-                    )
-                    db_row = res.scalar_one_or_none()
+                    db_row = rows_by_id.get(int(lbl))
                     if db_row and _matches_filters(db_row.meta, filters):
                         out.append({"external_id": db_row.external_id, "score": float(1 - dist), "metadata": db_row.meta})
                     if len(out) >= k + offset:
                         break
 
-                # DB fallback if not enough HNSW results
+                # DB fallback if not enough HNSW results — use LIMIT to avoid full table scan
                 if len(out) < k + offset:
                     found_ids = {r["external_id"] for r in out}
+                    needed = (k + offset) - len(out)
+                    # Fetch a bounded set of candidates rather than entire collection
+                    fallback_limit = needed * FILTER_OVERSAMPLE
                     all_rows_res = await session.execute(
-                        select(_Vector).where(_Vector.collection_id == col.id)
+                        select(_Vector).where(
+                            _Vector.collection_id == col.id,
+                            _Vector.external_id.notin_(found_ids) if found_ids else True,
+                        ).limit(fallback_limit)
                     )
                     cand_rows = [
                         r for r in all_rows_res.scalars().all()
@@ -458,7 +485,7 @@ class SQLiteHNSWBackend(VectorBackend):
                         mat = np.vstack([decode_vector(r.vector) for r in cand_rows])
                         matn = mat / (np.linalg.norm(mat, axis=1, keepdims=True) + 1e-10)
                         scores = matn.dot(qn)
-                        idxs = np.argsort(-scores)[:(k + offset) - len(out)]
+                        idxs = np.argsort(-scores)[:needed]
                         for i in idxs:
                             out.append({
                                 "external_id": cand_rows[i].external_id,
@@ -469,15 +496,20 @@ class SQLiteHNSWBackend(VectorBackend):
             else:
                 k_safe = min(k + offset, max(1, cur))
                 labels, distances = indexer.knn_query(q, k=k_safe)
+
+                # Batch fetch all result rows in one query
+                int_ids = [int(lbl) for lbl in labels]
+                res = await session.execute(
+                    select(_Vector).where(
+                        _Vector.internal_id.in_(int_ids),
+                        _Vector.collection_id == col.id,
+                    )
+                )
+                rows_by_id = {r.internal_id: r for r in res.scalars().all()}
+
                 out = []
                 for lbl, dist in zip(labels, distances):
-                    res = await session.execute(
-                        select(_Vector).where(
-                            _Vector.internal_id == int(lbl),
-                            _Vector.collection_id == col.id,
-                        )
-                    )
-                    db_row = res.scalar_one_or_none()
+                    db_row = rows_by_id.get(int(lbl))
                     if db_row:
                         out.append({"external_id": db_row.external_id, "score": float(1 - dist), "metadata": db_row.meta})
                 return out[offset: offset + k]
@@ -507,17 +539,22 @@ class SQLiteHNSWBackend(VectorBackend):
 
             indexer.set_ef(ef)
             labels, distances = indexer.knn_query(vec, k=k_safe + 1)
+
+            # Batch fetch all candidate rows in one query
+            int_ids = [int(lbl) for lbl in labels if lbl != row.internal_id]
+            res = await session.execute(
+                select(_Vector).where(
+                    _Vector.internal_id.in_(int_ids),
+                    _Vector.collection_id == col.id,
+                )
+            )
+            rows_by_id = {r.internal_id: r for r in res.scalars().all()}
+
             out = []
             for lbl, dist in zip(labels, distances):
                 if lbl == row.internal_id:
                     continue
-                r = await session.execute(
-                    select(_Vector).where(
-                        _Vector.internal_id == int(lbl),
-                        _Vector.collection_id == col.id,
-                    )
-                )
-                db_row = r.scalar_one_or_none()
+                db_row = rows_by_id.get(int(lbl))
                 if db_row:
                     out.append({"external_id": db_row.external_id, "score": float(1 - dist), "metadata": db_row.meta})
                 if len(out) >= k_safe:
@@ -589,20 +626,24 @@ class SQLiteHNSWBackend(VectorBackend):
         q = np.array(vector, dtype=np.float32)
 
         async with self._session_factory() as session:
-            # Vector search
+            # Vector search — batch fetch
             vector_results: Dict[str, Any] = {}
             cur = indexer.get_current_count()
             if cur > 0:
                 fetch_k = min((k + offset) * 3, cur)
                 labels, distances = indexer.knn_query(q, k=fetch_k)
-                for lbl, dist in zip(labels, distances):
-                    res = await session.execute(
-                        select(_Vector).where(
-                            _Vector.internal_id == int(lbl),
-                            _Vector.collection_id == col.id,
-                        )
+
+                int_ids = [int(lbl) for lbl in labels]
+                res = await session.execute(
+                    select(_Vector).where(
+                        _Vector.internal_id.in_(int_ids),
+                        _Vector.collection_id == col.id,
                     )
-                    db_row = res.scalar_one_or_none()
+                )
+                rows_by_id = {r.internal_id: r for r in res.scalars().all()}
+
+                for lbl, dist in zip(labels, distances):
+                    db_row = rows_by_id.get(int(lbl))
                     if db_row:
                         if filters and not _matches_filters(db_row.meta, filters):
                             continue
@@ -661,12 +702,28 @@ class SQLiteHNSWBackend(VectorBackend):
 
     async def health_stats(self) -> Dict[str, Any]:
         async with self._session_factory() as session:
+            from sqlalchemy import func as sa_func
+
             result = await session.execute(select(_Collection))
             collections = result.scalars().all()
+
+            # Batch count: single GROUP BY query
+            col_ids = [c.id for c in collections]
+            counts = {}
+            if col_ids:
+                count_result = await session.execute(
+                    select(
+                        _Vector.collection_id,
+                        sa_func.count(_Vector.internal_id),
+                    ).where(_Vector.collection_id.in_(col_ids))
+                    .group_by(_Vector.collection_id)
+                )
+                counts = dict(count_result.all())
+
             total_vectors = 0
             col_stats = []
             for col in collections:
-                count = await self._vec_count(session, col.id)
+                count = counts.get(col.id, 0)
                 total_vectors += count
                 indexer = self._index_manager.get(col.name)
                 index_size = indexer.get_current_count() if indexer else 0
