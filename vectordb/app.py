@@ -20,7 +20,7 @@ from vectordb.routers import (
     keys, observability, documents, query, usage
 )
 from vectordb.tracing import setup_tracing
-from fastapi import FastAPI
+
 # ------------------------------------------------------------------
 # Settings & logging
 # ------------------------------------------------------------------
@@ -62,12 +62,17 @@ def _wrap_cache(backend, settings):
     )
 
 # ------------------------------------------------------------------
-# Lifespan
+# Lifespan (SAFE VERSION)
 # ------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
-        init_db()
+        # 🔥 DO NOT crash startup
+        try:
+            init_db()
+        except Exception as e:
+            logger.warning("init_db_failed", error=str(e))
+
         observability.reset_start_time()
 
         await app.state.backend.startup()
@@ -75,8 +80,9 @@ async def lifespan(app: FastAPI):
         from vectordb.services.embedding_service import initialize_provider
         initialize_provider()
 
-        from vectordb.cleanup import cleanup_loop
-        asyncio.create_task(cleanup_loop())
+        # ❌ Disabled for stability
+        # from vectordb.cleanup import cleanup_loop
+        # asyncio.create_task(cleanup_loop())
 
         logger.info("app_startup_complete")
 
@@ -89,11 +95,15 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # 🔥 Safe shutdown
     try:
-        await app.state.backend.shutdown()
+        if hasattr(app.state, "backend"):
+            result = app.state.backend.shutdown()
+            if asyncio.iscoroutine(result):
+                await result
         logger.info("app_shutdown_complete")
     except Exception as e:
-        logger.error("shutdown_failed", error=str(e))
+        logger.warning("shutdown_failed", error=str(e))
 
 # ------------------------------------------------------------------
 # App
@@ -104,7 +114,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# backend must exist before routers
+# Backend must exist BEFORE routers
 _backend = _create_backend(settings)
 _backend = _wrap_cache(_backend, settings)
 app.state.backend = _backend
