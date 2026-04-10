@@ -3,6 +3,7 @@
 import asyncio
 import traceback
 from contextlib import asynccontextmanager
+import threading
 
 import structlog
 from fastapi import FastAPI, Request
@@ -72,21 +73,23 @@ _backend = _wrap_cache(_backend, settings)
 app.state.backend = _backend  # type: ignore
 
 # ------------------------------------------------------------------
-# BACKGROUND STARTUP (NON-BLOCKING FIX)
+# 🔥 THREAD-BASED BACKEND START (CRITICAL FIX)
 # ------------------------------------------------------------------
-async def start_backend_background():
+def start_backend_thread():
     try:
-        await app.state.backend.startup()
+        import asyncio
+        asyncio.run(app.state.backend.startup())
         logger.info("backend_started")
     except Exception as e:
         logger.warning("backend_start_failed", error=str(e))
 
 # ------------------------------------------------------------------
-# Lifespan (FAST + SAFE)
+# Lifespan
 # ------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # DB (never block)
+
+    # DB init (non-blocking)
     try:
         init_db()
     except Exception as e:
@@ -98,10 +101,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("observability_failed", error=str(e))
 
-    # 🔥 CRITICAL: backend in background
-    asyncio.create_task(start_backend_background())
+    # 🔥 FIX: backend runs in separate thread
+    threading.Thread(target=start_backend_thread, daemon=True).start()
 
-    # embeddings (non-blocking)
+    # embeddings
     try:
         from vectordb.services.embedding_service import initialize_provider
         initialize_provider()
