@@ -1,4 +1,5 @@
 # vectordb/models/db.py
+
 from sqlalchemy import (
     create_engine, Column, Integer, String, LargeBinary, JSON, Text,
     DateTime, ForeignKey, UniqueConstraint, Boolean, event, func,
@@ -7,39 +8,71 @@ from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 from vectordb.config import get_settings
 
-settings = get_settings()
-
-ENGINE = create_engine(
-    settings.db_url,
-    connect_args={"check_same_thread": False},
-    pool_size=10,
-    pool_pre_ping=True,
-)
-SessionLocal = sessionmaker(bind=ENGINE, autoflush=False, autocommit=False)
 Base = declarative_base()
 
+# ------------------------------------------------------------------
+# Lazy engine + session (CRITICAL FIX)
+# ------------------------------------------------------------------
+
+_ENGINE = None
+_SessionLocal = None
+
+
+def _set_sqlite_pragma(engine):
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+
+
+def get_engine():
+    global _ENGINE
+    if _ENGINE is None:
+        settings = get_settings()
+
+        _ENGINE = create_engine(
+            settings.db_url,
+            connect_args={"check_same_thread": False},
+            pool_pre_ping=True,   # keep this
+        )
+
+        _set_sqlite_pragma(_ENGINE)
+
+    return _ENGINE
+
+
+def get_session_local():
+    global _SessionLocal
+    if _SessionLocal is None:
+        _SessionLocal = sessionmaker(
+            bind=get_engine(),
+            autoflush=False,
+            autocommit=False
+        )
+    return _SessionLocal
+
 
 # ------------------------------------------------------------------
-# Enable WAL mode and performance pragmas for SQLite
+# Models
 # ------------------------------------------------------------------
-@event.listens_for(ENGINE, "connect")
-def set_sqlite_pragma(dbapi_conn, connection_record):
-    cursor = dbapi_conn.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.close()
-
 
 class Collection(Base):
     __tablename__ = "collections"
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, unique=True, nullable=False, index=True)
     dim = Column(Integer, nullable=False)
-    distance_metric = Column(String, nullable=False, default="cosine")  # cosine, l2, ip
+    distance_metric = Column(String, nullable=False, default="cosine")
     description = Column(Text, nullable=True)
-    user_id = Column(Integer, nullable=True, index=True)  # None = global/bootstrap
+    user_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
-    vectors = relationship("Vector", back_populates="collection", cascade="all, delete-orphan")
+
+    vectors = relationship(
+        "Vector",
+        back_populates="collection",
+        cascade="all, delete-orphan"
+    )
 
 
 class Vector(Base):
@@ -48,8 +81,8 @@ class Vector(Base):
     external_id = Column(String, nullable=False, index=True)
     collection_id = Column(Integer, ForeignKey("collections.id"), nullable=False, index=True)
     meta = Column("metadata", JSON, nullable=True)
-    vector = Column(LargeBinary, nullable=False)  # binary float32 bytes
-    content = Column(Text, nullable=True)  # optional text content for hybrid search
+    vector = Column(LargeBinary, nullable=False)
+    content = Column(Text, nullable=True)
 
     collection = relationship("Collection", back_populates="vectors")
 
@@ -61,12 +94,12 @@ class Vector(Base):
 class KeyUsageLog(Base):
     __tablename__ = "key_usage_logs"
     id = Column(Integer, primary_key=True, index=True)
-    key_id = Column(Integer, nullable=True, index=True)   # null for bootstrap key
+    key_id = Column(Integer, nullable=True, index=True)
     key_name = Column(String, nullable=False)
     endpoint = Column(String, nullable=False)
     method = Column(String, nullable=False)
     status_code = Column(Integer, nullable=False)
-    user_id = Column(Integer, nullable=True, index=True)  # denormalized for fast per-user queries
+    user_id = Column(Integer, nullable=True, index=True)
     timestamp = Column(DateTime, server_default=func.now(), index=True)
 
 
@@ -75,9 +108,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, nullable=False, index=True)
     password_hash = Column(String, nullable=False)
-    tier = Column(String, nullable=False, default="free")  # free, starter, pro, scale
+    tier = Column(String, nullable=False, default="free")
     created_at = Column(DateTime, server_default=func.now())
-    last_active_at = Column(DateTime, nullable=True)  # updated on every authed request
+    last_active_at = Column(DateTime, nullable=True)
 
     api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
     usage_summaries = relationship("UserUsageSummary", back_populates="user", cascade="all, delete-orphan")
@@ -88,12 +121,12 @@ class ApiKey(Base):
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String, unique=True, nullable=False, index=True)
     name = Column(String, nullable=False)
-    role = Column(String, nullable=False)  # "admin", "readwrite", "readonly"
+    role = Column(String, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)  # None = bootstrap/global key
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
-    expires_at = Column(DateTime, nullable=True)       # None = never expires
-    last_used_at = Column(DateTime, nullable=True)     # updated on every authenticated request
+    expires_at = Column(DateTime, nullable=True)
+    last_used_at = Column(DateTime, nullable=True)
 
     user = relationship("User", back_populates="api_keys")
 
@@ -102,22 +135,32 @@ class UserUsageSummary(Base):
     __tablename__ = "user_usage_summary"
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    period = Column(String, nullable=False)  # "2026-04" (YYYY-MM)
+    period = Column(String, nullable=False)
     request_count = Column(Integer, nullable=False, default=0)
     vector_count = Column(Integer, nullable=False, default=0)
-    # UniqueConstraint creates an implicit index on (user_id, period)
-    __table_args__ = (UniqueConstraint("user_id", "period", name="uq_user_usage_period"),)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "period", name="uq_user_usage_period"),
+    )
 
     user = relationship("User", back_populates="usage_summaries")
 
 
+# ------------------------------------------------------------------
+# DB helpers
+# ------------------------------------------------------------------
+
 def init_db():
-    Base.metadata.create_all(bind=ENGINE)
+    engine = get_engine()
+    try:
+        Base.metadata.create_all(bind=engine, checkfirst=True)
+    except Exception as e:
+        import logging
+        logging.warning(f"DB init skipped: {e}")
 
 
 def get_db():
-    """FastAPI dependency that yields a DB session and closes it after use."""
-    db = SessionLocal()
+    db = get_session_local()()
     try:
         yield db
     finally:
