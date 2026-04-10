@@ -66,36 +66,39 @@ def _wrap_cache(backend, settings):
 # ------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # -------- STARTUP (independent steps) --------
+
+    # DB (never block startup)
     try:
-        # 🔥 DO NOT crash startup
-        try:
-            init_db()
-        except Exception as e:
-            logger.warning("init_db_failed", error=str(e))
+        init_db()
+    except Exception as e:
+        logger.warning("init_db_failed", error=str(e))
 
+    # observability
+    try:
         observability.reset_start_time()
+    except Exception as e:
+        logger.warning("observability_failed", error=str(e))
 
+    # backend startup
+    try:
         await app.state.backend.startup()
+    except Exception as e:
+        logger.warning("backend_start_failed", error=str(e))
 
+    # embeddings
+    try:
         from vectordb.services.embedding_service import initialize_provider
         initialize_provider()
-
-        # ❌ Disabled for stability
-        # from vectordb.cleanup import cleanup_loop
-        # asyncio.create_task(cleanup_loop())
-
-        logger.info("app_startup_complete")
-
     except Exception as e:
-        logger.error(
-            "startup_failed",
-            error=str(e),
-            traceback=traceback.format_exc()
-        )
+        logger.warning("embedding_init_failed", error=str(e))
 
+    logger.info("app_startup_complete")
+
+    # IMPORTANT: allow app to start no matter what
     yield
 
-    # 🔥 Safe shutdown
+    # -------- SHUTDOWN --------
     try:
         if hasattr(app.state, "backend"):
             result = app.state.backend.shutdown()
@@ -104,7 +107,6 @@ async def lifespan(app: FastAPI):
         logger.info("app_shutdown_complete")
     except Exception as e:
         logger.warning("shutdown_failed", error=str(e))
-
 # ------------------------------------------------------------------
 # App
 # ------------------------------------------------------------------
