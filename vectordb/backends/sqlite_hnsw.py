@@ -807,6 +807,150 @@ class SQLiteHNSWBackend(VectorBackend):
             return out
 
     # ------------------------------------------------------------------
+    # Get / Fetch / Scroll
+    # ------------------------------------------------------------------
+
+    async def get_vector(
+        self, collection_name: str, external_id: str, user_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        col = await self._require_collection(collection_name)
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(_Vector).where(
+                    _Vector.collection_id == col.id,
+                    _Vector.external_id == external_id,
+                )
+            )
+            row = result.scalar_one_or_none()
+            if not row:
+                return None
+            return {
+                "external_id": row.external_id,
+                "metadata": row.meta,
+                "vector": decode_vector(row.vector).tolist(),
+                "content": row.content,
+            }
+
+    async def batch_get_vectors(
+        self, collection_name: str, ids: List[str],
+        include_vectors: bool = True, user_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        col = await self._require_collection(collection_name)
+        async with self._session_factory() as session:
+            if include_vectors:
+                result = await session.execute(
+                    select(_Vector).where(
+                        _Vector.collection_id == col.id,
+                        _Vector.external_id.in_(ids),
+                    )
+                )
+            else:
+                result = await session.execute(
+                    select(
+                        _Vector.external_id, _Vector.meta, _Vector.content,
+                    ).where(
+                        _Vector.collection_id == col.id,
+                        _Vector.external_id.in_(ids),
+                    )
+                )
+
+            if include_vectors:
+                rows_by_eid = {r.external_id: r for r in result.scalars().all()}
+            else:
+                rows_by_eid = {r.external_id: r for r in result.all()}
+
+            out = []
+            for eid in ids:
+                row = rows_by_eid.get(eid)
+                if not row:
+                    continue
+                item = {
+                    "external_id": row.external_id if hasattr(row, 'external_id') else eid,
+                    "metadata": row.meta,
+                    "content": row.content,
+                }
+                if include_vectors:
+                    item["vector"] = decode_vector(row.vector).tolist()
+                out.append(item)
+            return out
+
+    async def scroll(
+        self, collection_name: str, cursor: Optional[int] = None,
+        limit: int = 100, filters: Optional[Dict[str, Any]] = None,
+        include_vectors: bool = True, user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        col = await self._require_collection(collection_name)
+        start_id = cursor if cursor is not None else 0
+        max_scan = limit * 5  # MAX_SCAN_MULTIPLIER
+
+        async with self._session_factory() as session:
+            collected = []
+            scanned = 0
+            current_cursor = start_id
+
+            while len(collected) < limit and scanned < max_scan:
+                fetch_size = (limit - len(collected)) * 2 if filters else limit - len(collected) + 1
+                fetch_size = min(fetch_size, max_scan - scanned)
+                if fetch_size <= 0:
+                    break
+
+                stmt = (
+                    select(_Vector)
+                    .where(
+                        _Vector.collection_id == col.id,
+                        _Vector.internal_id > current_cursor,
+                    )
+                    .order_by(_Vector.internal_id)
+                    .limit(fetch_size)
+                )
+                result = await session.execute(stmt)
+                rows = result.scalars().all()
+
+                if not rows:
+                    break
+
+                scanned += len(rows)
+                for row in rows:
+                    current_cursor = row.internal_id
+                    if filters and not _matches_filters(row.meta, filters):
+                        continue
+                    item = {
+                        "external_id": row.external_id,
+                        "metadata": row.meta,
+                        "content": row.content,
+                    }
+                    if include_vectors:
+                        item["vector"] = decode_vector(row.vector).tolist()
+                    collected.append((row.internal_id, item))
+                    if len(collected) >= limit + 1:
+                        break
+
+            # Determine next_cursor
+            if len(collected) > limit:
+                vectors_out = [item for _, item in collected[:limit]]
+                next_cursor_id = collected[limit - 1][0]
+            elif len(collected) == limit:
+                # Check if there are more rows
+                check = await session.execute(
+                    select(_Vector.internal_id)
+                    .where(
+                        _Vector.collection_id == col.id,
+                        _Vector.internal_id > current_cursor,
+                    )
+                    .limit(1)
+                )
+                has_more = check.scalar_one_or_none() is not None
+                vectors_out = [item for _, item in collected]
+                next_cursor_id = collected[-1][0] if has_more else None
+            else:
+                vectors_out = [item for _, item in collected]
+                next_cursor_id = None
+
+            import base64
+            next_cursor = base64.b64encode(str(next_cursor_id).encode()).decode() if next_cursor_id else None
+            return {"vectors": vectors_out, "next_cursor": next_cursor}
+
+    # ------------------------------------------------------------------
     # Legacy: ensure default collection exists (for legacy endpoints)
     # ------------------------------------------------------------------
 

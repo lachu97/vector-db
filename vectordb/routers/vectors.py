@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 
 from sqlalchemy.orm import Session
 
-from vectordb.auth import ApiKeyInfo, require_readwrite
+from vectordb.auth import ApiKeyInfo, require_readonly, require_readwrite
 from vectordb.backends import get_backend
 from vectordb.backends.base import (
     CollectionNotFoundError,
@@ -17,7 +17,10 @@ from vectordb.backends.base import (
 )
 from vectordb.config import get_settings
 from vectordb.models.db import get_db
-from vectordb.models.schemas import BulkUpsertRequest, BatchDeleteRequest, UpsertRequest
+from vectordb.models.schemas import (
+    BatchDeleteRequest, BatchFetchRequest, BulkUpsertRequest,
+    ScrollRequest, UpsertRequest,
+)
 from vectordb.quota import adjust_vector_count
 from vectordb.services.embedding_service import embed_text, embed_batch
 from vectordb.services.vector_service import error_response, success_response
@@ -245,6 +248,80 @@ async def batch_delete_in_collection(
         deleted_count = result.get("deleted_count", 0) if isinstance(result, dict) else len(req.external_ids)
         if deleted_count > 0:
             adjust_vector_count(db, auth.user_id, -deleted_count)
+        return success_response(result)
+    except CollectionNotFoundError:
+        return error_response(404, f"Collection '{collection_name}' not found")
+
+
+# ------------------------------------------------------------------
+# Get / Fetch / Scroll
+# ------------------------------------------------------------------
+
+@router.get("/collections/{collection_name}/vectors/{external_id}")
+async def get_vector_by_id(
+    collection_name: str,
+    external_id: str,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_readonly),
+):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
+    try:
+        result = await backend.get_vector(collection_name, external_id, user_id=auth.user_id)
+        if not result:
+            return error_response(404, f"Vector '{external_id}' not found")
+        return success_response(result)
+    except CollectionNotFoundError:
+        return error_response(404, f"Collection '{collection_name}' not found")
+
+
+@router.post("/collections/{collection_name}/vectors/fetch")
+async def batch_fetch_vectors(
+    collection_name: str,
+    req: BatchFetchRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_readonly),
+):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
+    try:
+        results = await backend.batch_get_vectors(
+            collection_name, req.ids, include_vectors=req.include_vectors, user_id=auth.user_id,
+        )
+        return success_response({"vectors": results})
+    except CollectionNotFoundError:
+        return error_response(404, f"Collection '{collection_name}' not found")
+
+
+@router.post("/collections/{collection_name}/scroll")
+async def scroll_vectors(
+    collection_name: str,
+    req: ScrollRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_readonly),
+):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
+
+    # Decode cursor
+    import base64
+    cursor_int = None
+    if req.cursor is not None:
+        try:
+            decoded = base64.b64decode(req.cursor).decode()
+            cursor_int = int(decoded)
+        except Exception:
+            return error_response(400, "Invalid cursor")
+
+    try:
+        result = await backend.scroll(
+            collection_name, cursor=cursor_int, limit=req.limit,
+            filters=req.filters, include_vectors=req.include_vectors,
+            user_id=auth.user_id,
+        )
         return success_response(result)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")

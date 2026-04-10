@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     max_concurrent_embeddings: int = 4
     max_query_length: int = 1000
 
+    # LLM (for /v1/ask RAG answer generation)
+    openai_api_key: str = ""              # env: OPENAI_API_KEY
+    llm_model: str = "gpt-4o-mini"        # env: LLM_MODEL
+
     # Storage backend — Phase 5
     storage_backend: str = "sqlite"   # "sqlite" or "postgres"
     redis_url: str = ""               # e.g. "redis://localhost:6379/0"

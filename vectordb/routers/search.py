@@ -12,7 +12,7 @@ from vectordb.backends.base import (
     VectorNotFoundError,
     VectorBackend,
 )
-from vectordb.models.schemas import HybridSearchRequest, RerankRequest, SearchRequest
+from vectordb.models.schemas import BulkSearchRequest, HybridSearchRequest, RerankRequest, SearchRequest
 from vectordb.services.embedding_service import embed_text_cached_async
 from vectordb.services.vector_service import error_response, success_response
 
@@ -205,6 +205,35 @@ async def hybrid_search_in_collection(
         if req.include_timing:
             data["timing_ms"] = timing
         return success_response(data)
+    except CollectionNotFoundError:
+        return error_response(404, f"Collection '{collection_name}' not found")
+    except DimensionMismatchError as e:
+        return error_response(400, str(e))
+
+
+@router.post("/collections/{collection_name}/bulk_search")
+async def bulk_search_in_collection(
+    collection_name: str,
+    req: BulkSearchRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_readonly),
+):
+    access_err = await _check_collection_access(backend, collection_name, auth.user_id)
+    if access_err:
+        return access_err
+
+    # Validate vector dimensions match collection
+    col = await backend.get_collection(collection_name, user_id=auth.user_id)
+    for i, q in enumerate(req.queries):
+        if len(q.vector) != col["dim"]:
+            return error_response(
+                400, f"Query {i}: vector dimension {len(q.vector)} does not match collection dimension {col['dim']}"
+            )
+
+    try:
+        queries = [{"vector": q.vector, "k": q.k, "filters": q.filters} for q in req.queries]
+        results = await backend.bulk_search(collection_name, queries, user_id=auth.user_id)
+        return success_response({"results": results})
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:

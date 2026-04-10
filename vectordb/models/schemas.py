@@ -103,3 +103,75 @@ class QueryRequest(BaseModel):
     top_k: int = 5
     filters: Optional[Dict[str, Any]] = None
     include_timing: bool = False
+
+
+# ------------------------------------------------------------------
+# Batch fetch schemas
+# ------------------------------------------------------------------
+class BatchFetchRequest(BaseModel):
+    ids: List[str]
+    include_vectors: bool = True
+
+    @model_validator(mode="after")
+    def validate_ids(self):
+        if len(self.ids) > 100:
+            raise ValueError("Maximum 100 IDs per request")
+        return self
+
+
+# ------------------------------------------------------------------
+# Scroll schemas
+# ------------------------------------------------------------------
+class ScrollRequest(BaseModel):
+    cursor: Optional[str] = None
+    limit: int = 100
+    filters: Optional[Dict[str, Any]] = None
+    include_vectors: bool = True
+
+    @model_validator(mode="after")
+    def validate_limit(self):
+        if self.limit < 1 or self.limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        return self
+
+
+# ------------------------------------------------------------------
+# Bulk search schemas
+# ------------------------------------------------------------------
+class BulkSearchQuery(BaseModel):
+    vector: List[float]
+    k: int = 10
+    filters: Optional[Dict[str, Any]] = None
+
+    @model_validator(mode="after")
+    def validate_vector(self):
+        if len(self.vector) < 1:
+            raise ValueError("vector must be non-empty")
+        return self
+
+
+class BulkSearchRequest(BaseModel):
+    queries: List[BulkSearchQuery]
+
+    @model_validator(mode="after")
+    def validate_queries(self):
+        if len(self.queries) > 20:
+            raise ValueError("Maximum 20 queries per request")
+        return self
+
+
+# ------------------------------------------------------------------
+# Ask (RAG answer generation) schemas
+# ------------------------------------------------------------------
+class AskRequest(BaseModel):
+    query: str
+    collection: str
+    k: int = 5
+
+    @model_validator(mode="after")
+    def validate_ask(self):
+        if not self.query.strip():
+            raise ValueError("query must be non-empty")
+        if self.k < 1 or self.k > 20:
+            raise ValueError("k must be between 1 and 20")
+        return self

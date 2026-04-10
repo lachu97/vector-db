@@ -589,6 +589,137 @@ class PostgresVectorBackend(VectorBackend):
         return merged[offset: offset + k]
 
     # ------------------------------------------------------------------
+    # Get / Fetch / Scroll
+    # ------------------------------------------------------------------
+
+    async def get_vector(
+        self, collection_name: str, external_id: str, user_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        col = await self._require_collection_row(collection_name)
+        vt = self._ensure_vector_table(collection_name, col.dim)
+        async with self._engine.connect() as conn:
+            result = await conn.execute(
+                select(vt).where(vt.c.external_id == external_id)
+            )
+            row = result.fetchone()
+            if not row:
+                return None
+            return {
+                "external_id": row.external_id,
+                "metadata": row.meta,
+                "vector": list(row.embedding) if row.embedding is not None else [],
+                "content": row.content,
+            }
+
+    async def batch_get_vectors(
+        self, collection_name: str, ids: List[str],
+        include_vectors: bool = True, user_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        col = await self._require_collection_row(collection_name)
+        vt = self._ensure_vector_table(collection_name, col.dim)
+        async with self._engine.connect() as conn:
+            if include_vectors:
+                result = await conn.execute(
+                    select(vt).where(vt.c.external_id.in_(ids))
+                )
+            else:
+                result = await conn.execute(
+                    select(vt.c.external_id, vt.c.meta, vt.c.content)
+                    .where(vt.c.external_id.in_(ids))
+                )
+            rows_by_eid = {r.external_id: r for r in result.fetchall()}
+
+        out = []
+        for eid in ids:
+            row = rows_by_eid.get(eid)
+            if not row:
+                continue
+            item = {
+                "external_id": row.external_id,
+                "metadata": row.meta,
+                "content": row.content,
+            }
+            if include_vectors:
+                item["vector"] = list(row.embedding) if row.embedding is not None else []
+            out.append(item)
+        return out
+
+    async def scroll(
+        self, collection_name: str, cursor: Optional[int] = None,
+        limit: int = 100, filters: Optional[Dict[str, Any]] = None,
+        include_vectors: bool = True, user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        col = await self._require_collection_row(collection_name)
+        vt = self._ensure_vector_table(collection_name, col.dim)
+        start_id = cursor if cursor is not None else 0
+        max_scan = limit * 5
+
+        async with self._engine.connect() as conn:
+            collected = []
+            scanned = 0
+            current_cursor = start_id
+
+            while len(collected) < limit and scanned < max_scan:
+                fetch_size = (limit - len(collected)) * 2 if filters else limit - len(collected) + 1
+                fetch_size = min(fetch_size, max_scan - scanned)
+                if fetch_size <= 0:
+                    break
+
+                if include_vectors:
+                    stmt = (
+                        select(vt)
+                        .where(vt.c.id > current_cursor)
+                        .order_by(vt.c.id)
+                        .limit(fetch_size)
+                    )
+                else:
+                    stmt = (
+                        select(vt.c.id, vt.c.external_id, vt.c.meta, vt.c.content)
+                        .where(vt.c.id > current_cursor)
+                        .order_by(vt.c.id)
+                        .limit(fetch_size)
+                    )
+                result = await conn.execute(stmt)
+                rows = result.fetchall()
+
+                if not rows:
+                    break
+
+                scanned += len(rows)
+                for row in rows:
+                    current_cursor = row.id
+                    if filters and not self._meta_matches(row.meta, filters):
+                        continue
+                    item = {
+                        "external_id": row.external_id,
+                        "metadata": row.meta,
+                        "content": row.content,
+                    }
+                    if include_vectors:
+                        item["vector"] = list(row.embedding) if row.embedding is not None else []
+                    collected.append((row.id, item))
+                    if len(collected) >= limit + 1:
+                        break
+
+            if len(collected) > limit:
+                vectors_out = [item for _, item in collected[:limit]]
+                next_cursor_id = collected[limit - 1][0]
+            elif len(collected) == limit:
+                check = await conn.execute(
+                    select(vt.c.id).where(vt.c.id > current_cursor).limit(1)
+                )
+                has_more = check.fetchone() is not None
+                vectors_out = [item for _, item in collected]
+                next_cursor_id = collected[-1][0] if has_more else None
+            else:
+                vectors_out = [item for _, item in collected]
+                next_cursor_id = None
+
+            import base64
+            next_cursor = base64.b64encode(str(next_cursor_id).encode()).decode() if next_cursor_id else None
+            return {"vectors": vectors_out, "next_cursor": next_cursor}
+
+    # ------------------------------------------------------------------
     # Observability
     # ------------------------------------------------------------------
 

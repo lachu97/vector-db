@@ -215,3 +215,40 @@ class VectorBackend(ABC):
     ) -> List[Dict[str, Any]]:
         """Export vectors as list of {external_id, vector, metadata}. Returns [] if unsupported."""
         return []
+
+    async def get_vector(
+        self, collection_name: str, external_id: str, user_id: Optional[int] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Return a single vector by external_id, or None if not found.
+        Returns {external_id, metadata, vector, content}."""
+        return None
+
+    async def batch_get_vectors(
+        self, collection_name: str, ids: List[str],
+        include_vectors: bool = True, user_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Fetch multiple vectors by external_id. Ignores missing IDs.
+        Preserves input order. Returns list of {external_id, metadata, vector?, content}."""
+        return []
+
+    async def scroll(
+        self, collection_name: str, cursor: Optional[int] = None,
+        limit: int = 100, filters: Optional[Dict[str, Any]] = None,
+        include_vectors: bool = True, user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        """Cursor-based iteration over vectors. Returns {vectors: [...], next_cursor: str|null}."""
+        return {"vectors": [], "next_cursor": None}
+
+    async def bulk_search(
+        self, collection_name: str, queries: List[Dict[str, Any]],
+        user_id: Optional[int] = None
+    ) -> List[List[Dict[str, Any]]]:
+        """Execute multiple search queries. Default: loop over search().
+        Each query: {vector, k, filters}. Returns list of result lists."""
+        results = []
+        for q in queries:
+            r = await self.search(
+                collection_name, q["vector"], q.get("k", 10), 0, q.get("filters")
+            )
+            results.append(r)
+        return results
