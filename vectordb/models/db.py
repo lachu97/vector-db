@@ -11,7 +11,7 @@ from vectordb.config import get_settings
 Base = declarative_base()
 
 # ------------------------------------------------------------------
-# Lazy engine + session (CRITICAL FIX)
+# Lazy engine + session
 # ------------------------------------------------------------------
 
 _ENGINE = None
@@ -35,7 +35,7 @@ def get_engine():
         _ENGINE = create_engine(
             settings.db_url,
             connect_args={"check_same_thread": False},
-            pool_pre_ping=True,   # keep this
+            pool_pre_ping=True,
         )
 
         _set_sqlite_pragma(_ENGINE)
@@ -55,6 +55,17 @@ def get_session_local():
 
 
 # ------------------------------------------------------------------
+# BACKWARD COMPATIBILITY (CRITICAL — fixes your import error)
+# ------------------------------------------------------------------
+
+# These make existing imports work:
+# from vectordb.models.db import SessionLocal, ENGINE
+
+ENGINE = get_engine()
+SessionLocal = get_session_local()
+
+
+# ------------------------------------------------------------------
 # Models
 # ------------------------------------------------------------------
 
@@ -68,11 +79,7 @@ class Collection(Base):
     user_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
 
-    vectors = relationship(
-        "Vector",
-        back_populates="collection",
-        cascade="all, delete-orphan"
-    )
+    vectors = relationship("Vector", back_populates="collection", cascade="all, delete-orphan")
 
 
 class Vector(Base):
@@ -160,7 +167,7 @@ def init_db():
 
 
 def get_db():
-    db = get_session_local()()
+    db = SessionLocal()
     try:
         yield db
     finally:
