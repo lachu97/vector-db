@@ -40,7 +40,7 @@ async def query_documents(
     # Run query
     try:
         results, timing = await run_query(
-            req.query, req.collection_name, req.top_k, backend, filters=req.filters,
+            req.query, req.collection_name, req.top_k, backend, filters=req.filters, user_id=auth.user_id,
         )
         data = {
             "query": req.query,
@@ -74,7 +74,7 @@ async def ask(
 
     # Retrieve sources using existing run_query
     try:
-        results, _ = await run_query(req.query, req.collection, req.k, backend)
+        results, _ = await run_query(req.query, req.collection, req.k, backend, user_id=auth.user_id)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{req.collection}' not found")
 

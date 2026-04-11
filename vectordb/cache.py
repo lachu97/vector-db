@@ -68,25 +68,25 @@ def _hash(obj: Any) -> str:
     return hashlib.md5(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
 
-def _search_key(col: str, vector: list, k: int, offset: int, filters: Optional[dict]) -> str:
-    return f"search:{col}:{_hash(vector)}:{k}:{offset}:{_hash(filters)}"
+def _search_key(collection_id: int, vector: list, k: int, offset: int, filters: Optional[dict]) -> str:
+    return f"search:{collection_id}:{_hash(vector)}:{k}:{offset}:{_hash(filters)}"
 
 
-def _recommend_key(col: str, ext_id: str, k: int, ef: int) -> str:
-    return f"recommend:{col}:{ext_id}:{k}:{ef}"
+def _recommend_key(collection_id: int, ext_id: str, k: int, ef: int) -> str:
+    return f"recommend:{collection_id}:{ext_id}:{k}:{ef}"
 
 
-def _rerank_key(col: str, vector: list, candidates: list) -> str:
-    return f"rerank:{col}:{_hash(vector)}:{_hash(sorted(candidates))}"
+def _rerank_key(collection_id: int, vector: list, candidates: list) -> str:
+    return f"rerank:{collection_id}:{_hash(vector)}:{_hash(sorted(candidates))}"
 
 
-def _hybrid_key(col: str, text: str, vector: list, k: int, offset: int, alpha: float,
+def _hybrid_key(collection_id: int, text: str, vector: list, k: int, offset: int, alpha: float,
                 filters: Optional[dict]) -> str:
-    return f"hybrid:{col}:{_hash(text)}:{_hash(vector)}:{k}:{offset}:{alpha}:{_hash(filters)}"
+    return f"hybrid:{collection_id}:{_hash(text)}:{_hash(vector)}:{k}:{offset}:{alpha}:{_hash(filters)}"
 
 
-def _collection_pattern(col: str) -> str:
-    return f"*:{col}:*"
+def _collection_pattern(collection_id: int) -> str:
+    return f"*:{collection_id}:*"
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +104,17 @@ class CachingBackend(VectorBackend):
     def __init__(self, inner: VectorBackend, redis_url: str, ttl: int):
         self._inner = inner
         self._cache = _RedisCache(redis_url, ttl)
+
+    async def _resolve_collection_id(self, collection_name: str, user_id: Optional[int]) -> Optional[int]:
+        if hasattr(self._inner, "_lookup_collection_id"):
+            try:
+                return await self._inner._lookup_collection_id(collection_name, user_id)  # type: ignore[attr-defined]
+            except Exception:
+                return None
+        col = await self._inner.get_collection(collection_name, user_id=user_id)
+        if not col:
+            return None
+        return col.get("id")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -130,84 +141,108 @@ class CachingBackend(VectorBackend):
         return await self._inner.list_collections(user_id)
 
     async def delete_collection(self, name, user_id=None):
-        await self._cache.delete_pattern(_collection_pattern(name))
+        cid = await self._resolve_collection_id(name, user_id)
+        if cid is not None:
+            await self._cache.delete_pattern(_collection_pattern(cid))
         return await self._inner.delete_collection(name, user_id)
 
     async def update_collection(self, name, description, user_id=None):
         return await self._inner.update_collection(name, description, user_id)
 
-    async def count_vectors(self, collection_name, filters=None):
-        return await self._inner.count_vectors(collection_name, filters)
+    async def count_vectors(self, collection_name, filters=None, user_id=None):
+        return await self._inner.count_vectors(collection_name, filters, user_id=user_id)
 
-    async def export_vectors(self, collection_name, limit=10000):
-        return await self._inner.export_vectors(collection_name, limit)
+    async def export_vectors(self, collection_name, limit=10000, user_id=None):
+        return await self._inner.export_vectors(collection_name, limit, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Vectors (write → invalidate)
     # ------------------------------------------------------------------
 
-    async def upsert(self, collection_name, external_id, vector, metadata, content):
-        await self._cache.delete_pattern(_collection_pattern(collection_name))
-        return await self._inner.upsert(collection_name, external_id, vector, metadata, content)
+    async def upsert(self, collection_name, external_id, vector, metadata, content, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is not None:
+            await self._cache.delete_pattern(_collection_pattern(cid))
+        return await self._inner.upsert(collection_name, external_id, vector, metadata, content, user_id=user_id)
 
-    async def bulk_upsert(self, collection_name, items):
-        await self._cache.delete_pattern(_collection_pattern(collection_name))
-        return await self._inner.bulk_upsert(collection_name, items)
+    async def bulk_upsert(self, collection_name, items, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is not None:
+            await self._cache.delete_pattern(_collection_pattern(cid))
+        return await self._inner.bulk_upsert(collection_name, items, user_id=user_id)
 
-    async def delete_vector(self, collection_name, external_id):
-        await self._cache.delete_pattern(_collection_pattern(collection_name))
-        return await self._inner.delete_vector(collection_name, external_id)
+    async def delete_vector(self, collection_name, external_id, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is not None:
+            await self._cache.delete_pattern(_collection_pattern(cid))
+        return await self._inner.delete_vector(collection_name, external_id, user_id=user_id)
 
-    async def batch_delete(self, collection_name, external_ids):
-        await self._cache.delete_pattern(_collection_pattern(collection_name))
-        return await self._inner.batch_delete(collection_name, external_ids)
+    async def batch_delete(self, collection_name, external_ids, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is not None:
+            await self._cache.delete_pattern(_collection_pattern(cid))
+        return await self._inner.batch_delete(collection_name, external_ids, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Search (read → cache)
     # ------------------------------------------------------------------
 
-    async def search(self, collection_name, vector, k, offset, filters):
-        key = _search_key(collection_name, vector, k, offset, filters)
+    async def search(self, collection_name, vector, k, offset, filters, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is None:
+            return await self._inner.search(collection_name, vector, k, offset, filters, user_id=user_id)
+        key = _search_key(cid, vector, k, offset, filters)
         cached = await self._cache.get(key)
         if cached is not None:
             logger.debug("cache_hit", op="search", collection=collection_name)
             return cached
-        result = await self._inner.search(collection_name, vector, k, offset, filters)
+        result = await self._inner.search(collection_name, vector, k, offset, filters, user_id=user_id)
         await self._cache.set(key, result)
         return result
 
-    async def recommend(self, collection_name, external_id, k, ef):
-        key = _recommend_key(collection_name, external_id, k, ef)
+    async def recommend(self, collection_name, external_id, k, ef, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is None:
+            return await self._inner.recommend(collection_name, external_id, k, ef, user_id=user_id)
+        key = _recommend_key(cid, external_id, k, ef)
         cached = await self._cache.get(key)
         if cached is not None:
             logger.debug("cache_hit", op="recommend", collection=collection_name)
             return cached
-        result = await self._inner.recommend(collection_name, external_id, k, ef)
+        result = await self._inner.recommend(collection_name, external_id, k, ef, user_id=user_id)
         await self._cache.set(key, result)
         return result
 
-    async def similarity(self, collection_name, id1, id2):
+    async def similarity(self, collection_name, id1, id2, user_id=None):
         # Similarity is cheap, skip caching
-        return await self._inner.similarity(collection_name, id1, id2)
+        return await self._inner.similarity(collection_name, id1, id2, user_id=user_id)
 
-    async def rerank(self, collection_name, query_vector, candidates):
-        key = _rerank_key(collection_name, query_vector, candidates)
+    async def rerank(self, collection_name, query_vector, candidates, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is None:
+            return await self._inner.rerank(collection_name, query_vector, candidates, user_id=user_id)
+        key = _rerank_key(cid, query_vector, candidates)
         cached = await self._cache.get(key)
         if cached is not None:
             logger.debug("cache_hit", op="rerank", collection=collection_name)
             return cached
-        result = await self._inner.rerank(collection_name, query_vector, candidates)
+        result = await self._inner.rerank(collection_name, query_vector, candidates, user_id=user_id)
         await self._cache.set(key, result)
         return result
 
-    async def hybrid_search(self, collection_name, query_text, vector, k, offset, alpha, filters):
-        key = _hybrid_key(collection_name, query_text, vector, k, offset, alpha, filters)
+    async def hybrid_search(self, collection_name, query_text, vector, k, offset, alpha, filters, user_id=None):
+        cid = await self._resolve_collection_id(collection_name, user_id)
+        if cid is None:
+            return await self._inner.hybrid_search(
+                collection_name, query_text, vector, k, offset, alpha, filters, user_id=user_id
+            )
+        key = _hybrid_key(cid, query_text, vector, k, offset, alpha, filters)
         cached = await self._cache.get(key)
         if cached is not None:
             logger.debug("cache_hit", op="hybrid_search", collection=collection_name)
             return cached
         result = await self._inner.hybrid_search(
-            collection_name, query_text, vector, k, offset, alpha, filters
+            collection_name, query_text, vector, k, offset, alpha, filters, user_id=user_id
         )
         await self._cache.set(key, result)
         return result

@@ -98,6 +98,7 @@ class VectorBackend(ABC):
         vector: List[float],
         metadata: Optional[Dict[str, Any]],
         content: Optional[str],
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Insert or update a vector.
@@ -107,7 +108,7 @@ class VectorBackend(ABC):
 
     @abstractmethod
     async def bulk_upsert(
-        self, collection_name: str, items: List[Dict[str, Any]]
+        self, collection_name: str, items: List[Dict[str, Any]], user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Batch insert/update.
@@ -116,7 +117,9 @@ class VectorBackend(ABC):
         """
 
     @abstractmethod
-    async def delete_vector(self, collection_name: str, external_id: str) -> Dict[str, Any]:
+    async def delete_vector(
+        self, collection_name: str, external_id: str, user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         """
         Delete a single vector.
         Raises CollectionNotFoundError, VectorNotFoundError.
@@ -125,7 +128,7 @@ class VectorBackend(ABC):
 
     @abstractmethod
     async def batch_delete(
-        self, collection_name: str, external_ids: List[str]
+        self, collection_name: str, external_ids: List[str], user_id: Optional[int] = None
     ) -> Dict[str, Any]:
         """
         Delete multiple vectors.
@@ -145,18 +148,19 @@ class VectorBackend(ABC):
         k: int,
         offset: int,
         filters: Optional[Dict[str, Any]],
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """KNN search. Returns list of {"external_id", "score", "metadata"}."""
 
     @abstractmethod
     async def recommend(
-        self, collection_name: str, external_id: str, k: int, ef: int
+        self, collection_name: str, external_id: str, k: int, ef: int, user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Similar vectors excluding self. Returns list of {"external_id", "score", "metadata"}."""
 
     @abstractmethod
     async def similarity(
-        self, collection_name: str, id1: str, id2: str
+        self, collection_name: str, id1: str, id2: str, user_id: Optional[int] = None
     ) -> float:
         """Cosine similarity between two vectors. Raises VectorNotFoundError."""
 
@@ -166,6 +170,7 @@ class VectorBackend(ABC):
         collection_name: str,
         query_vector: List[float],
         candidates: List[str],
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Re-score candidates by similarity to query. Returns sorted list."""
 
@@ -179,6 +184,7 @@ class VectorBackend(ABC):
         offset: int,
         alpha: float,
         filters: Optional[Dict[str, Any]],
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Combined vector + text search via RRF."""
 
@@ -205,13 +211,14 @@ class VectorBackend(ABC):
         return None
 
     async def count_vectors(
-        self, collection_name: str, filters: Optional[Dict[str, Any]] = None
+        self, collection_name: str, filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None,
     ) -> int:
         """Return total number of vectors matching optional filters. Returns -1 if unsupported."""
         return -1
 
     async def export_vectors(
-        self, collection_name: str, limit: int = 10000
+        self, collection_name: str, limit: int = 10000, user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """Export vectors as list of {external_id, vector, metadata}. Returns [] if unsupported."""
         return []
@@ -248,7 +255,7 @@ class VectorBackend(ABC):
         results = []
         for q in queries:
             r = await self.search(
-                collection_name, q["vector"], q.get("k", 10), 0, q.get("filters")
+                collection_name, q["vector"], q.get("k", 10), 0, q.get("filters"), user_id=user_id
             )
             results.append(r)
         return results

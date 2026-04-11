@@ -53,6 +53,7 @@ async def upload_document(
             backend,
             chunk_size=settings.chunk_size,
             overlap=settings.chunk_overlap,
+            user_id=auth.user_id,
         )
         if include_timing:
             result["timing_ms"] = timing

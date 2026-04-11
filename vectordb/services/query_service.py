@@ -17,6 +17,7 @@ async def run_query(
     top_k: int,
     backend: VectorBackend,
     filters: Optional[Dict[str, Any]] = None,
+    user_id: Optional[int] = None,
 ) -> tuple:
     """Embed query, search collection, return (formatted_results, timing_dict)."""
     t0 = time.perf_counter()
@@ -27,7 +28,7 @@ async def run_query(
 
     # 2. Search via existing backend
     results = await backend.search(
-        collection_name, query_vector, k=top_k, offset=0, filters=filters,
+        collection_name, query_vector, k=top_k, offset=0, filters=filters, user_id=user_id,
     )
     t_search = time.perf_counter()
 

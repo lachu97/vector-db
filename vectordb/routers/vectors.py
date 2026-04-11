@@ -35,20 +35,20 @@ def _settings():
     return get_settings()
 
 
-async def _ensure_default(backend: VectorBackend):
+async def _ensure_default(backend: VectorBackend, user_id=None):
     """Get or create the default collection for legacy endpoints."""
     if hasattr(backend, "ensure_default_collection"):
-        return await backend.ensure_default_collection()
-    col = await backend.get_collection(DEFAULT_COLLECTION)
+        return await backend.ensure_default_collection(user_id=user_id)
+    col = await backend.get_collection(DEFAULT_COLLECTION, user_id=user_id)
     if col:
         return col
     from vectordb.backends.base import CollectionAlreadyExistsError
     try:
         return await backend.create_collection(
-            DEFAULT_COLLECTION, get_settings().vector_dim, "cosine"
+            DEFAULT_COLLECTION, get_settings().vector_dim, "cosine", user_id=user_id
         )
     except CollectionAlreadyExistsError:
-        return await backend.get_collection(DEFAULT_COLLECTION)
+        return await backend.get_collection(DEFAULT_COLLECTION, user_id=user_id)
 
 
 # ------------------------------------------------------------------
@@ -99,6 +99,7 @@ async def upsert_vector_in_collection(
             vector,
             metadata or None,
             content,
+            user_id=auth.user_id,
         )
         storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
@@ -186,7 +187,7 @@ async def bulk_upsert_in_collection(
                 "metadata": it.metadata, "content": content,
             })
         t_storage = time.perf_counter()
-        results = await backend.bulk_upsert(collection_name, items)
+        results = await backend.bulk_upsert(collection_name, items, user_id=auth.user_id)
         storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
@@ -220,7 +221,7 @@ async def delete_vector_in_collection(
     if access_err:
         return access_err
     try:
-        result = await backend.delete_vector(collection_name, external_id)
+        result = await backend.delete_vector(collection_name, external_id, user_id=auth.user_id)
         adjust_vector_count(db, auth.user_id, -1)
         return success_response(result)
     except CollectionNotFoundError:
@@ -244,7 +245,7 @@ async def batch_delete_in_collection(
     if len(req.external_ids) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
     try:
-        result = await backend.batch_delete(collection_name, req.external_ids)
+        result = await backend.batch_delete(collection_name, req.external_ids, user_id=auth.user_id)
         deleted_count = result.get("deleted_count", 0) if isinstance(result, dict) else len(req.external_ids)
         if deleted_count > 0:
             adjust_vector_count(db, auth.user_id, -deleted_count)
@@ -339,7 +340,7 @@ async def upsert_vector_legacy(
     db: Session = Depends(get_db),
 ):
     t_start = time.perf_counter()
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
     settings = _settings()
     metadata = item.metadata or {}
     if len(metadata) > settings.max_metadata_size:
@@ -364,6 +365,7 @@ async def upsert_vector_legacy(
             vector,
             metadata or None,
             content,
+            user_id=auth.user_id,
         )
         storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
@@ -392,7 +394,7 @@ async def bulk_upsert_legacy(
     settings = _settings()
     if len(req.items) > settings.max_batch_size:
         return error_response(400, f"Batch size exceeds maximum of {settings.max_batch_size}")
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
 
     # Bulk size + vector quota pre-check
     from vectordb.quota import MAX_BULK_SIZE, TIER_LIMITS, is_bypass_user as _is_bypass
@@ -439,7 +441,7 @@ async def bulk_upsert_legacy(
                 "metadata": it.metadata, "content": content,
             })
         t_storage = time.perf_counter()
-        results = await backend.bulk_upsert(DEFAULT_COLLECTION, items)
+        results = await backend.bulk_upsert(DEFAULT_COLLECTION, items, user_id=auth.user_id)
         storage_ms = round((time.perf_counter() - t_storage) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
@@ -466,9 +468,9 @@ async def delete_vector_legacy(
     auth: ApiKeyInfo = Depends(require_readwrite),
     db: Session = Depends(get_db),
 ):
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
     try:
-        result = await backend.delete_vector(DEFAULT_COLLECTION, external_id)
+        result = await backend.delete_vector(DEFAULT_COLLECTION, external_id, user_id=auth.user_id)
         adjust_vector_count(db, auth.user_id, -1)
         return success_response(result)
     except VectorNotFoundError:

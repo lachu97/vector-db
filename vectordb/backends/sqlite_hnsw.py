@@ -263,8 +263,9 @@ class SQLiteHNSWBackend(VectorBackend):
         vector: List[float],
         metadata: Optional[Dict[str, Any]],
         content: Optional[str],
+        user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         if len(vector) != col.dim:
             raise DimensionMismatchError(col.dim, len(vector))
         vec_np = normalize_vector(np.array(vector, dtype=np.float32))
@@ -305,9 +306,9 @@ class SQLiteHNSWBackend(VectorBackend):
                 return {"external_id": external_id, "status": "inserted"}
 
     async def bulk_upsert(
-        self, collection_name: str, items: List[Dict[str, Any]]
+        self, collection_name: str, items: List[Dict[str, Any]], user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         for it in items:
             if len(it["vector"]) != col.dim:
                 raise DimensionMismatchError(col.dim, len(it["vector"]))
@@ -364,8 +365,10 @@ class SQLiteHNSWBackend(VectorBackend):
 
         return results
 
-    async def delete_vector(self, collection_name: str, external_id: str) -> Dict[str, Any]:
-        col = await self._require_collection(collection_name)
+    async def delete_vector(
+        self, collection_name: str, external_id: str, user_id: Optional[int] = None
+    ) -> Dict[str, Any]:
+        col = await self._require_collection(collection_name, user_id=user_id)
         indexer = self._index_manager.get_or_create(col.name, col.dim, col.distance_metric)
 
         async with self._session_factory() as session:
@@ -387,9 +390,9 @@ class SQLiteHNSWBackend(VectorBackend):
         return {"status": "deleted", "external_id": external_id}
 
     async def batch_delete(
-        self, collection_name: str, external_ids: List[str]
+        self, collection_name: str, external_ids: List[str], user_id: Optional[int] = None
     ) -> Dict[str, Any]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         indexer = self._index_manager.get_or_create(col.name, col.dim, col.distance_metric)
         deleted = []
         not_found = []
@@ -430,8 +433,9 @@ class SQLiteHNSWBackend(VectorBackend):
         k: int,
         offset: int,
         filters: Optional[Dict[str, Any]],
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         if len(vector) != col.dim:
             raise DimensionMismatchError(col.dim, len(vector))
 
@@ -515,9 +519,9 @@ class SQLiteHNSWBackend(VectorBackend):
                 return out[offset: offset + k]
 
     async def recommend(
-        self, collection_name: str, external_id: str, k: int, ef: int
+        self, collection_name: str, external_id: str, k: int, ef: int, user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         indexer = self._index_manager.get_or_create(col.name, col.dim, col.distance_metric)
 
         async with self._session_factory() as session:
@@ -561,8 +565,10 @@ class SQLiteHNSWBackend(VectorBackend):
                     break
             return out
 
-    async def similarity(self, collection_name: str, id1: str, id2: str) -> float:
-        col = await self._require_collection(collection_name)
+    async def similarity(
+        self, collection_name: str, id1: str, id2: str, user_id: Optional[int] = None
+    ) -> float:
+        col = await self._require_collection(collection_name, user_id=user_id)
 
         async with self._session_factory() as session:
             r1 = await session.execute(
@@ -585,8 +591,9 @@ class SQLiteHNSWBackend(VectorBackend):
         collection_name: str,
         query_vector: List[float],
         candidates: List[str],
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         if len(query_vector) != col.dim:
             raise DimensionMismatchError(col.dim, len(query_vector))
 
@@ -617,8 +624,9 @@ class SQLiteHNSWBackend(VectorBackend):
         offset: int,
         alpha: float,
         filters: Optional[Dict[str, Any]],
+        user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         if len(vector) != col.dim:
             raise DimensionMismatchError(col.dim, len(vector))
 
@@ -762,13 +770,11 @@ class SQLiteHNSWBackend(VectorBackend):
             return _col_to_dict(col, count)
 
     async def count_vectors(
-        self, collection_name: str, filters: Optional[Dict[str, Any]] = None
+        self, collection_name: str, filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None,
     ) -> int:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(_Collection).where(_Collection.name == collection_name)
-            )
-            col = result.scalar_one_or_none()
+            col = await self._resolve_collection(session, collection_name, user_id=user_id)
             if not col:
                 return 0
             if not filters:
@@ -783,13 +789,10 @@ class SQLiteHNSWBackend(VectorBackend):
             )
 
     async def export_vectors(
-        self, collection_name: str, limit: int = 10000
+        self, collection_name: str, limit: int = 10000, user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         async with self._session_factory() as session:
-            result = await session.execute(
-                select(_Collection).where(_Collection.name == collection_name)
-            )
-            col = result.scalar_one_or_none()
+            col = await self._resolve_collection(session, collection_name, user_id=user_id)
             if not col:
                 return []
             rows_res = await session.execute(
@@ -813,7 +816,7 @@ class SQLiteHNSWBackend(VectorBackend):
     async def get_vector(
         self, collection_name: str, external_id: str, user_id: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         async with self._session_factory() as session:
             result = await session.execute(
                 select(_Vector).where(
@@ -835,7 +838,7 @@ class SQLiteHNSWBackend(VectorBackend):
         self, collection_name: str, ids: List[str],
         include_vectors: bool = True, user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         async with self._session_factory() as session:
             if include_vectors:
                 result = await session.execute(
@@ -879,7 +882,7 @@ class SQLiteHNSWBackend(VectorBackend):
         limit: int = 100, filters: Optional[Dict[str, Any]] = None,
         include_vectors: bool = True, user_id: Optional[int] = None
     ) -> Dict[str, Any]:
-        col = await self._require_collection(collection_name)
+        col = await self._require_collection(collection_name, user_id=user_id)
         start_id = cursor if cursor is not None else 0
         max_scan = limit * 5  # MAX_SCAN_MULTIPLIER
 
@@ -954,30 +957,47 @@ class SQLiteHNSWBackend(VectorBackend):
     # Legacy: ensure default collection exists (for legacy endpoints)
     # ------------------------------------------------------------------
 
-    async def ensure_default_collection(self) -> Dict[str, Any]:
+    async def ensure_default_collection(self, user_id: Optional[int] = None) -> Dict[str, Any]:
         """Get or create the 'default' collection for legacy endpoints."""
-        col = await self.get_collection(self.DEFAULT_COLLECTION)
+        col = await self.get_collection(self.DEFAULT_COLLECTION, user_id=user_id)
         if col:
             return col
         try:
             return await self.create_collection(
-                self.DEFAULT_COLLECTION, self._settings.vector_dim, "cosine"
+                self.DEFAULT_COLLECTION, self._settings.vector_dim, "cosine", user_id=user_id
             )
         except CollectionAlreadyExistsError:
-            return await self.get_collection(self.DEFAULT_COLLECTION)
+            return await self.get_collection(self.DEFAULT_COLLECTION, user_id=user_id)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _require_collection(self, name: str) -> "_Collection":
+    async def _require_collection(self, name: str, user_id: Optional[int] = None) -> "_Collection":
         """Return the ORM _Collection row or raise CollectionNotFoundError."""
         async with self._session_factory() as session:
-            result = await session.execute(select(_Collection).where(_Collection.name == name))
-            col = result.scalar_one_or_none()
+            col = await self._resolve_collection(session, name, user_id=user_id)
             if not col:
                 raise CollectionNotFoundError(name)
             return col
+
+    async def _resolve_collection(
+        self, session: AsyncSession, name: str, user_id: Optional[int] = None
+    ) -> Optional["_Collection"]:
+        stmt = select(_Collection).where(_Collection.name == name)
+        if user_id is not None:
+            from sqlalchemy import or_
+            stmt = stmt.where(or_(_Collection.user_id == user_id, _Collection.user_id.is_(None)))
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+        if len(rows) == 1:
+            return rows[0]
+        return None
+
+    async def _lookup_collection_id(self, name: str, user_id: Optional[int]) -> Optional[int]:
+        async with self._session_factory() as session:
+            col = await self._resolve_collection(session, name, user_id=user_id)
+            return col.id if col else None
 
     async def _vec_count(self, session: AsyncSession, collection_id: int) -> int:
         from sqlalchemy import func as sa_func
