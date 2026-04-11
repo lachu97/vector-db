@@ -212,10 +212,7 @@ class SQLiteHNSWBackend(VectorBackend):
 
             stmt = select(_Collection)
             if user_id is not None:
-                from sqlalchemy import or_
-                stmt = stmt.where(
-                    or_(_Collection.user_id == user_id, _Collection.user_id.is_(None))
-                )
+                stmt = stmt.where(_Collection.user_id == user_id)
             result = await session.execute(stmt)
             cols = result.scalars().all()
 
@@ -986,8 +983,7 @@ class SQLiteHNSWBackend(VectorBackend):
     ) -> Optional["_Collection"]:
         stmt = select(_Collection).where(_Collection.name == name)
         if user_id is not None:
-            from sqlalchemy import or_
-            stmt = stmt.where(or_(_Collection.user_id == user_id, _Collection.user_id.is_(None)))
+            stmt = stmt.where(_Collection.user_id == user_id)
         result = await session.execute(stmt)
         rows = result.scalars().all()
         if len(rows) == 1:

@@ -157,8 +157,7 @@ class PostgresVectorBackend(VectorBackend):
         async with self._session_factory() as session:
             stmt = select(_PgCollection)
             if user_id is not None:
-                from sqlalchemy import or_
-                stmt = stmt.where(or_(_PgCollection.user_id == user_id, _PgCollection.user_id.is_(None)))
+                stmt = stmt.where(_PgCollection.user_id == user_id)
             result = await session.execute(stmt)
             cols = result.scalars().all()
             out: List[Dict[str, Any]] = []
@@ -735,8 +734,7 @@ class PostgresVectorBackend(VectorBackend):
     ) -> Optional[_PgCollection]:
         stmt = select(_PgCollection).where(_PgCollection.name == name)
         if user_id is not None:
-            from sqlalchemy import or_
-            stmt = stmt.where(or_(_PgCollection.user_id == user_id, _PgCollection.user_id.is_(None)))
+            stmt = stmt.where(_PgCollection.user_id == user_id)
 
         result = await session.execute(stmt)
         rows = result.scalars().all()
