@@ -58,6 +58,19 @@ class Settings(BaseSettings):
     redis_url: str = ""               # e.g. "redis://localhost:6379/0"
     cache_ttl: int = 60              # search cache TTL in seconds
 
+    # Collection metadata cache
+    collection_cache_ttl: int = 10          # seconds; 0 = disabled
+    collection_cache_max_size: int = 1000   # max cached collections (LRU eviction)
+
+    # PostgreSQL connection pool tuning
+    db_pool_size: int = 20
+    db_pool_max_overflow: int = 10
+    db_pool_recycle: int = 1800
+    db_pool_timeout: int = 30
+
+    # pgvector HNSW query tuning
+    pg_ef_search: int = 40            # higher = more accurate but slower
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

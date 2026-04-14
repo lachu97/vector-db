@@ -7,6 +7,7 @@ Shared vector table:
 Collections registry table:
   pg_collections
 """
+import time
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -91,11 +92,24 @@ class PostgresVectorBackend(VectorBackend):
     """PostgreSQL backend using a shared pg_vectors table."""
 
     def __init__(self, db_url: str, settings):
+        from vectordb.collection_cache import CollectionCache
         self._settings = settings
         async_url = _to_async_pg_url(db_url)
-        self._engine = create_async_engine(async_url, pool_pre_ping=True, pool_size=5)
+        self._engine = create_async_engine(
+            async_url,
+            pool_pre_ping=True,
+            pool_size=settings.db_pool_size,
+            max_overflow=settings.db_pool_max_overflow,
+            pool_recycle=settings.db_pool_recycle,
+            pool_timeout=settings.db_pool_timeout,
+            pool_use_lifo=True,
+        )
         self._session_factory = async_sessionmaker(
             self._engine, class_=AsyncSession, expire_on_commit=False
+        )
+        self._col_cache = CollectionCache(
+            ttl=settings.collection_cache_ttl,
+            max_size=settings.collection_cache_max_size,
         )
 
     async def startup(self) -> None:
@@ -143,6 +157,7 @@ class PostgresVectorBackend(VectorBackend):
             session.add(col)
             await session.commit()
             await session.refresh(col)
+            self._col_cache.invalidate(name)
             return self._col_dict(col, 0)
 
     async def get_collection(self, name: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -160,32 +175,42 @@ class PostgresVectorBackend(VectorBackend):
                 stmt = stmt.where(_PgCollection.user_id == user_id)
             result = await session.execute(stmt)
             cols = result.scalars().all()
-            out: List[Dict[str, Any]] = []
-            for col in cols:
-                count = await self._vec_count(session, col.id)
-                out.append(self._col_dict(col, count))
-            return out
+            if not cols:
+                return []
+            # Batch count: single GROUP BY instead of N individual COUNTs
+            col_ids = [c.id for c in cols]
+            count_result = await session.execute(
+                select(_PgVector.collection_id, func.count(_PgVector.id))
+                .where(_PgVector.collection_id.in_(col_ids))
+                .group_by(_PgVector.collection_id)
+            )
+            counts = dict(count_result.all())
+            return [self._col_dict(col, counts.get(col.id, 0)) for col in cols]
 
     async def delete_collection(self, name: str, user_id: Optional[int] = None) -> None:
         async with self._session_factory() as session:
-            col = await self._require_collection_row(session, name, user_id)
+            col = await self._resolve_collection_row_db(session, name, user_id)
+            if not col:
+                raise CollectionNotFoundError(name)
             await session.execute(
                 _PgVector.__table__.delete().where(_PgVector.collection_id == col.id)
             )
             await session.delete(col)
             await session.commit()
+        self._col_cache.invalidate(name)
         logger.info("pg_collection_deleted", name=name)
 
     async def update_collection(
         self, name: str, description: Optional[str], user_id: Optional[int] = None
     ) -> Optional[Dict[str, Any]]:
         async with self._session_factory() as session:
-            col = await self._resolve_collection_row(session, name, user_id)
+            col = await self._resolve_collection_row_db(session, name, user_id)
             if not col:
                 return None
             col.description = description
             await session.commit()
             await session.refresh(col)
+            self._col_cache.invalidate(name)
             count = await self._vec_count(session, col.id)
             return self._col_dict(col, count)
 
@@ -241,12 +266,16 @@ class PostgresVectorBackend(VectorBackend):
         content: Optional[str],
         user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
+        t_total = time.perf_counter()
         async with self._session_factory() as session:
+            t_col = time.perf_counter()
             col = await self._require_collection_row(session, collection_name, user_id)
+            col_resolve_ms = round((time.perf_counter() - t_col) * 1000, 2)
             if len(vector) != col.dim:
                 raise DimensionMismatchError(col.dim, len(vector))
 
             vec_np = normalize_vector(np.array(vector, dtype=np.float32))
+            t_db = time.perf_counter()
             existing = await session.execute(
                 select(_PgVector).where(
                     _PgVector.collection_id == col.id,
@@ -260,6 +289,10 @@ class PostgresVectorBackend(VectorBackend):
                 if content is not None:
                     row.content = content
                 await session.commit()
+                db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
+                total_ms = round((time.perf_counter() - t_total) * 1000, 2)
+                logger.debug("pg_upsert", collection=collection_name, status="updated",
+                             col_resolve_ms=col_resolve_ms, db_op_ms=db_op_ms, total_ms=total_ms)
                 return {"external_id": external_id, "status": "updated"}
 
             session.add(_PgVector(
@@ -271,28 +304,40 @@ class PostgresVectorBackend(VectorBackend):
                 content=content,
             ))
             await session.commit()
+            db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
+            total_ms = round((time.perf_counter() - t_total) * 1000, 2)
+            logger.debug("pg_upsert", collection=collection_name, status="inserted",
+                         col_resolve_ms=col_resolve_ms, db_op_ms=db_op_ms, total_ms=total_ms)
             return {"external_id": external_id, "status": "inserted"}
 
     async def bulk_upsert(
         self, collection_name: str, items: List[Dict[str, Any]], user_id: Optional[int] = None
     ) -> List[Dict[str, Any]]:
+        t_total = time.perf_counter()
         async with self._session_factory() as session:
+            t_col = time.perf_counter()
             col = await self._require_collection_row(session, collection_name, user_id)
+            col_resolve_ms = round((time.perf_counter() - t_col) * 1000, 2)
             for it in items:
                 if len(it["vector"]) != col.dim:
                     raise DimensionMismatchError(col.dim, len(it["vector"]))
+
+            t_db = time.perf_counter()
+            # Batch fetch all existing rows in one query (instead of N individual SELECTs)
+            ext_ids = [it["external_id"] for it in items]
+            existing_result = await session.execute(
+                select(_PgVector).where(
+                    _PgVector.collection_id == col.id,
+                    _PgVector.external_id.in_(ext_ids),
+                )
+            )
+            existing_by_eid = {r.external_id: r for r in existing_result.scalars().all()}
 
             results = []
             for it in items:
                 vec_np = normalize_vector(np.array(it["vector"], dtype=np.float32))
                 ext_id = it["external_id"]
-                existing = await session.execute(
-                    select(_PgVector).where(
-                        _PgVector.collection_id == col.id,
-                        _PgVector.external_id == ext_id,
-                    )
-                )
-                row = existing.scalar_one_or_none()
+                row = existing_by_eid.get(ext_id)
                 if row:
                     row.embedding = vec_np.tolist()
                     row.meta = it.get("metadata") or row.meta
@@ -310,6 +355,10 @@ class PostgresVectorBackend(VectorBackend):
                     ))
                     results.append({"external_id": ext_id, "status": "inserted"})
             await session.commit()
+            db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
+            total_ms = round((time.perf_counter() - t_total) * 1000, 2)
+            logger.debug("pg_bulk_upsert", collection=collection_name, count=len(items),
+                         col_resolve_ms=col_resolve_ms, db_op_ms=db_op_ms, total_ms=total_ms)
             return results
 
     async def delete_vector(
@@ -335,16 +384,19 @@ class PostgresVectorBackend(VectorBackend):
     ) -> Dict[str, Any]:
         async with self._session_factory() as session:
             col = await self._require_collection_row(session, collection_name, user_id)
+            # Batch fetch all rows in one query (instead of N individual SELECTs)
+            result = await session.execute(
+                select(_PgVector).where(
+                    _PgVector.collection_id == col.id,
+                    _PgVector.external_id.in_(external_ids),
+                )
+            )
+            rows_by_eid = {r.external_id: r for r in result.scalars().all()}
+
             deleted = []
             not_found = []
             for eid in external_ids:
-                existing = await session.execute(
-                    select(_PgVector).where(
-                        _PgVector.collection_id == col.id,
-                        _PgVector.external_id == eid,
-                    )
-                )
-                row = existing.scalar_one_or_none()
+                row = rows_by_eid.get(eid)
                 if not row:
                     not_found.append(eid)
                 else:
@@ -362,14 +414,20 @@ class PostgresVectorBackend(VectorBackend):
         filters: Optional[Dict[str, Any]],
         user_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
+        t_total = time.perf_counter()
         async with self._session_factory() as session:
+            t_col = time.perf_counter()
             col = await self._require_collection_row(session, collection_name, user_id)
+            col_resolve_ms = round((time.perf_counter() - t_col) * 1000, 2)
             if len(vector) != col.dim:
                 raise DimensionMismatchError(col.dim, len(vector))
 
             vec_np = normalize_vector(np.array(vector, dtype=np.float32))
             op = _PG_OPS.get(col.distance_metric, "<=>")
             score_fn = _SCORE_FN.get(col.distance_metric, lambda d: float(1 - d))
+
+            # Set HNSW ef_search for this transaction
+            await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             stmt = (
                 select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS _dist"))
@@ -384,9 +442,14 @@ class PostgresVectorBackend(VectorBackend):
                     else:
                         stmt = stmt.where(_PgVector.meta[key].astext == str(val))
 
+            t_db = time.perf_counter()
             result = await session.execute(stmt, {"vec": vec_np.tolist()})
             rows = result.fetchall()
+            db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
 
+        total_ms = round((time.perf_counter() - t_total) * 1000, 2)
+        logger.debug("pg_search", collection=collection_name,
+                     col_resolve_ms=col_resolve_ms, db_op_ms=db_op_ms, total_ms=total_ms)
         return [
             {"external_id": r.external_id, "score": score_fn(r._dist), "metadata": r.meta}
             for r in rows[offset: offset + k]
@@ -409,6 +472,8 @@ class PostgresVectorBackend(VectorBackend):
             row = res.fetchone()
             if not row:
                 raise VectorNotFoundError(external_id)
+
+            await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             vec = row.embedding
             stmt = (
@@ -499,6 +564,8 @@ class PostgresVectorBackend(VectorBackend):
             vec_np = normalize_vector(np.array(vector, dtype=np.float32))
             op = _PG_OPS.get(col.distance_metric, "<=>")
             score_fn = _SCORE_FN.get(col.distance_metric, lambda d: float(1 - d))
+
+            await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             vec_stmt = (
                 select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS _dist"))
@@ -711,11 +778,20 @@ class PostgresVectorBackend(VectorBackend):
         async with self._session_factory() as session:
             result = await session.execute(select(_PgCollection))
             collections = result.scalars().all()
-            total_vectors = 0
+            if not collections:
+                return {"total_vectors": 0, "total_collections": 0, "collections": []}
+            # Batch count: single GROUP BY instead of N individual COUNTs
+            col_ids = [c.id for c in collections]
+            count_result = await session.execute(
+                select(_PgVector.collection_id, func.count(_PgVector.id))
+                .where(_PgVector.collection_id.in_(col_ids))
+                .group_by(_PgVector.collection_id)
+            )
+            counts = dict(count_result.all())
+            total_vectors = sum(counts.values())
             col_stats = []
             for col in collections:
-                count = await self._vec_count(session, col.id)
-                total_vectors += count
+                count = counts.get(col.id, 0)
                 col_stats.append({
                     "name": col.name,
                     "dim": col.dim,
@@ -729,9 +805,38 @@ class PostgresVectorBackend(VectorBackend):
                 "collections": col_stats,
             }
 
-    async def _resolve_collection_row(
+    def _col_to_cached(self, col: _PgCollection) -> Dict[str, Any]:
+        """Extract plain dict from ORM object for caching (no session binding)."""
+        return {
+            "id": col.id, "name": col.name, "dim": col.dim,
+            "distance_metric": col.distance_metric, "description": col.description,
+            "user_id": col.user_id,
+        }
+
+    def _cached_to_ns(self, data: Dict[str, Any]):
+        """Convert cached dict to namespace with attribute access (matches ORM usage)."""
+        import types
+        return types.SimpleNamespace(**data)
+
+    async def _resolve_collection_row_db(
         self, session: AsyncSession, name: str, user_id: Optional[int]
     ) -> Optional[_PgCollection]:
+        """Always hits DB, returns ORM object. Use for mutations (update/delete)."""
+        stmt = select(_PgCollection).where(_PgCollection.name == name)
+        if user_id is not None:
+            stmt = stmt.where(_PgCollection.user_id == user_id)
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+        return rows[0] if len(rows) == 1 else None
+
+    async def _resolve_collection_row(
+        self, session: AsyncSession, name: str, user_id: Optional[int]
+    ):
+        # Check cache first
+        cached = self._col_cache.get(name, user_id)
+        if cached is not None:
+            return self._cached_to_ns(cached)
+
         stmt = select(_PgCollection).where(_PgCollection.name == name)
         if user_id is not None:
             stmt = stmt.where(_PgCollection.user_id == user_id)
@@ -739,14 +844,13 @@ class PostgresVectorBackend(VectorBackend):
         result = await session.execute(stmt)
         rows = result.scalars().all()
         if len(rows) == 1:
+            self._col_cache.put(name, user_id, self._col_to_cached(rows[0]))
             return rows[0]
-        if len(rows) == 0:
-            return None
         return None
 
     async def _require_collection_row(
         self, session: AsyncSession, name: str, user_id: Optional[int]
-    ) -> _PgCollection:
+    ):
         col = await self._resolve_collection_row(session, name, user_id)
         if not col:
             raise CollectionNotFoundError(name)
@@ -759,6 +863,10 @@ class PostgresVectorBackend(VectorBackend):
         return result.scalar() or 0
 
     async def _lookup_collection_id(self, name: str, user_id: Optional[int]) -> Optional[int]:
+        # Check cache first
+        cached = self._col_cache.get(name, user_id)
+        if cached is not None:
+            return cached["id"]
         async with self._session_factory() as session:
             col = await self._resolve_collection_row(session, name, user_id)
             return col.id if col else None

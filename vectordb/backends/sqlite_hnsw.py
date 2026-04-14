@@ -117,6 +117,7 @@ class SQLiteHNSWBackend(VectorBackend):
     DEFAULT_COLLECTION = "default"
 
     def __init__(self, db_url: str, settings):
+        from vectordb.collection_cache import CollectionCache
         self._settings = settings
         async_url = _to_async_url(db_url)
         self._engine = create_async_engine(
@@ -136,6 +137,10 @@ class SQLiteHNSWBackend(VectorBackend):
             self._engine, class_=AsyncSession, expire_on_commit=False
         )
         self._index_manager = IndexManager()
+        self._col_cache = CollectionCache(
+            ttl=settings.collection_cache_ttl,
+            max_size=settings.collection_cache_max_size,
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -189,6 +194,7 @@ class SQLiteHNSWBackend(VectorBackend):
             await session.commit()
             await session.refresh(col)
             self._index_manager.get_or_create(col.name, col.dim, col.distance_metric)
+            self._col_cache.invalidate(name)
             return _col_to_dict(col, 0)
 
     async def get_collection(self, name: str, user_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
@@ -241,12 +247,12 @@ class SQLiteHNSWBackend(VectorBackend):
             col = result.scalar_one_or_none()
             if not col:
                 raise CollectionNotFoundError(name)
-            # Delete vectors first (avoid ORM relationship lazy-load)
-            vecs = await session.execute(select(_Vector).where(_Vector.collection_id == col.id))
-            for v in vecs.scalars().all():
-                await session.delete(v)
+            # Bulk delete vectors in one SQL statement (instead of loading all into memory)
+            from sqlalchemy import delete
+            await session.execute(delete(_Vector).where(_Vector.collection_id == col.id))
             await session.delete(col)
             await session.commit()
+        self._col_cache.invalidate(name)
         self._index_manager.remove(name)
 
     # ------------------------------------------------------------------
@@ -763,6 +769,7 @@ class SQLiteHNSWBackend(VectorBackend):
             col.description = description
             await session.commit()
             await session.refresh(col)
+            self._col_cache.invalidate(name)
             count = await self._vec_count(session, col.id)
             return _col_to_dict(col, count)
 
@@ -970,12 +977,28 @@ class SQLiteHNSWBackend(VectorBackend):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _require_collection(self, name: str, user_id: Optional[int] = None) -> "_Collection":
-        """Return the ORM _Collection row or raise CollectionNotFoundError."""
+    def _col_to_cached(self, col: _Collection) -> dict:
+        return {
+            "id": col.id, "name": col.name, "dim": col.dim,
+            "distance_metric": col.distance_metric, "description": col.description,
+            "user_id": col.user_id,
+        }
+
+    def _cached_to_ns(self, data: dict):
+        import types
+        return types.SimpleNamespace(**data)
+
+    async def _require_collection(self, name: str, user_id: Optional[int] = None):
+        """Return collection (cached namespace or ORM row) or raise."""
+        # Check cache first
+        cached = self._col_cache.get(name, user_id)
+        if cached is not None:
+            return self._cached_to_ns(cached)
         async with self._session_factory() as session:
             col = await self._resolve_collection(session, name, user_id=user_id)
             if not col:
                 raise CollectionNotFoundError(name)
+            self._col_cache.put(name, user_id, self._col_to_cached(col))
             return col
 
     async def _resolve_collection(
@@ -991,6 +1014,9 @@ class SQLiteHNSWBackend(VectorBackend):
         return None
 
     async def _lookup_collection_id(self, name: str, user_id: Optional[int]) -> Optional[int]:
+        cached = self._col_cache.get(name, user_id)
+        if cached is not None:
+            return cached["id"]
         async with self._session_factory() as session:
             col = await self._resolve_collection(session, name, user_id=user_id)
             return col.id if col else None

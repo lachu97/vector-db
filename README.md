@@ -68,7 +68,7 @@ docker build -t vector-db-mvp
 docker run -d \
   -p 8000:8000 \
   -v $(pwd)/data:/app/data \
-  -e API_KEY=test-key \
+  -e API_KEY=YOUR_API_KEY \
   --name vectordb_app \
   vector-db-mvp
 
