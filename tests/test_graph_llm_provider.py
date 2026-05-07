@@ -5,6 +5,41 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+class TestGraphEncryption:
+    def test_encrypt_decrypt_roundtrip(self):
+        """Encrypt then decrypt returns original dict."""
+        from vectordb.services.graph_encryption import encrypt_api_keys, decrypt_api_keys
+        key_hex = "a" * 64
+        original = {"api_key": "sk-secret", "GEMINI_API_KEY": "gm-secret"}
+        blob = encrypt_api_keys(original, key_hex)
+        assert isinstance(blob, str)
+        assert "sk-secret" not in blob
+        result = decrypt_api_keys(blob, key_hex)
+        assert result == original
+
+    def test_encrypt_empty_dict(self):
+        """Empty dict encrypts and decrypts cleanly."""
+        from vectordb.services.graph_encryption import encrypt_api_keys, decrypt_api_keys
+        key_hex = "b" * 64
+        blob = encrypt_api_keys({}, key_hex)
+        assert decrypt_api_keys(blob, key_hex) == {}
+
+    def test_no_encryption_key_stores_plaintext(self):
+        """When encryption key is empty, returns raw JSON (plaintext fallback)."""
+        from vectordb.services.graph_encryption import encrypt_api_keys, decrypt_api_keys
+        keys = {"api_key": "sk-plain"}
+        blob = encrypt_api_keys(keys, encryption_key="")
+        assert json.loads(blob) == keys
+        assert decrypt_api_keys(blob, encryption_key="") == keys
+
+    def test_wrong_key_raises(self):
+        """Decrypting with wrong key raises an exception."""
+        from vectordb.services.graph_encryption import encrypt_api_keys, decrypt_api_keys
+        blob = encrypt_api_keys({"api_key": "secret"}, "a" * 64)
+        with pytest.raises(Exception):
+            decrypt_api_keys(blob, "b" * 64)
+
+
 class TestConfig:
     def test_new_graph_config_fields_present(self):
         """Config has encryption key and provider key fields; old ollama vars removed."""
