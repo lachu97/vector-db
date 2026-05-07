@@ -13,7 +13,7 @@ import numpy as np
 import structlog
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, JSON,
-    LargeBinary, String, Text, UniqueConstraint, event, func, select,
+    LargeBinary, String, Text, UniqueConstraint, event, func, select, update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
@@ -972,6 +972,80 @@ class SQLiteHNSWBackend(VectorBackend):
             )
         except CollectionAlreadyExistsError:
             return await self.get_collection(self.DEFAULT_COLLECTION, user_id=user_id)
+
+    # ------------------------------------------------------------------
+    # GraphRAG: extraction job management
+    # ------------------------------------------------------------------
+
+    async def enqueue_extraction_jobs(
+        self, collection_id: int, jobs: List[dict]
+    ) -> None:
+        """Bulk insert pending extraction jobs for a document's chunks."""
+        from vectordb.models.db import GraphExtractionJob
+        async with self._session_factory() as session:
+            for job in jobs:
+                session.add(GraphExtractionJob(
+                    collection_id=collection_id,
+                    document_id=job["document_id"],
+                    chunk_id=job["chunk_id"],
+                    chunk_text=job["chunk_text"],
+                    status="pending",
+                ))
+            await session.commit()
+
+    async def get_pending_extraction_jobs(
+        self, limit: int = 10
+    ) -> List[dict]:
+        """Fetch pending jobs for the extraction worker."""
+        from vectordb.models.db import GraphExtractionJob
+        async with self._session_factory() as session:
+            rows = await session.execute(
+                select(GraphExtractionJob)
+                .where(
+                    GraphExtractionJob.status == "pending",
+                    GraphExtractionJob.attempt_count < GraphExtractionJob.max_attempts,
+                )
+                .order_by(GraphExtractionJob.created_at)
+                .limit(limit)
+            )
+            jobs = rows.scalars().all()
+            return [
+                {
+                    "id": j.id, "collection_id": j.collection_id,
+                    "document_id": j.document_id, "chunk_id": j.chunk_id,
+                    "chunk_text": j.chunk_text, "attempt_count": j.attempt_count,
+                }
+                for j in jobs
+            ]
+
+    async def update_extraction_job(
+        self, job_id: int, status: str, error_message: Optional[str] = None
+    ) -> None:
+        """Update job status after processing."""
+        from vectordb.models.db import GraphExtractionJob
+        from datetime import datetime
+        async with self._session_factory() as session:
+            job = await session.get(GraphExtractionJob, job_id)
+            if job:
+                job.status = status
+                job.updated_at = datetime.utcnow()
+                if error_message is not None:
+                    job.error_message = error_message
+                if status == "processing":
+                    job.attempt_count += 1
+                await session.commit()
+
+    async def reset_processing_jobs(self) -> None:
+        """On startup: reset any stuck 'processing' jobs back to 'pending'."""
+        from vectordb.models.db import GraphExtractionJob
+        from datetime import datetime
+        async with self._session_factory() as session:
+            await session.execute(
+                update(GraphExtractionJob)
+                .where(GraphExtractionJob.status == "processing")
+                .values(status="pending", updated_at=datetime.utcnow())
+            )
+            await session.commit()
 
     # ------------------------------------------------------------------
     # Internal helpers

@@ -259,3 +259,19 @@ class VectorBackend(ABC):
             )
             results.append(r)
         return results
+
+    # ------------------------------------------------------------------
+    # GraphRAG: extraction job management (optional — raise if unsupported)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def enqueue_extraction_jobs(self, collection_id: int, jobs: list) -> None: ...
+
+    @abstractmethod
+    async def get_pending_extraction_jobs(self, limit: int = 10) -> list: ...
+
+    @abstractmethod
+    async def update_extraction_job(self, job_id: int, status: str, error_message=None) -> None: ...
+
+    @abstractmethod
+    async def reset_processing_jobs(self) -> None: ...

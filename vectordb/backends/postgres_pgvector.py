@@ -877,6 +877,22 @@ class PostgresVectorBackend(VectorBackend):
             return False
         return all(meta.get(k) == v for k, v in filters.items())
 
+    # ------------------------------------------------------------------
+    # GraphRAG: extraction job management (not implemented for Postgres)
+    # ------------------------------------------------------------------
+
+    async def enqueue_extraction_jobs(self, collection_id: int, jobs: list) -> None:
+        raise NotImplementedError("GraphRAG extraction jobs not supported by PostgreSQL backend")
+
+    async def get_pending_extraction_jobs(self, limit: int = 10) -> list:
+        raise NotImplementedError("GraphRAG extraction jobs not supported by PostgreSQL backend")
+
+    async def update_extraction_job(self, job_id: int, status: str, error_message=None) -> None:
+        raise NotImplementedError("GraphRAG extraction jobs not supported by PostgreSQL backend")
+
+    async def reset_processing_jobs(self) -> None:
+        raise NotImplementedError("GraphRAG extraction jobs not supported by PostgreSQL backend")
+
     @staticmethod
     def _col_dict(col: _PgCollection, vec_count: int) -> Dict[str, Any]:
         return {
