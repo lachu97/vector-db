@@ -1,5 +1,5 @@
 # vectordb/models/schemas.py
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, model_validator, field_validator
 from typing import List, Optional, Dict, Any
 
 
@@ -257,3 +257,48 @@ class GraphAskResponse(BaseModel):
     sources: List[Any]
     graph_context: Dict[str, Any]
     timing_ms: Optional[Dict[str, float]] = None
+
+
+# ------------------------------------------------------------------
+# Flexible LLM provider schemas
+# ------------------------------------------------------------------
+
+class GraphConfigRequest(BaseModel):
+    model: Optional[str] = None
+    api_keys: Optional[Dict[str, str]] = None
+
+
+class GraphConfigResponse(BaseModel):
+    model: Optional[str]
+    api_keys_set: bool
+
+
+class TestModelRequest(BaseModel):
+    model: str
+    text: str
+    api_keys: Dict[str, str] = {}
+
+
+class TestModelResponse(BaseModel):
+    model: str
+    entities: List[Dict[str, Any]]
+    edges: List[Dict[str, Any]]
+    timing_ms: float
+    error: Optional[str] = None
+
+
+class BenchmarkRequest(BaseModel):
+    models: List[str]
+    text: str
+    api_keys: Dict[str, str] = {}
+
+    @field_validator("models")
+    @classmethod
+    def max_five_models(cls, v):
+        if len(v) > 5:
+            raise ValueError("max 5 models per benchmark request")
+        return v
+
+
+class BenchmarkResponse(BaseModel):
+    results: List[TestModelResponse]

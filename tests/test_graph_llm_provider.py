@@ -143,6 +143,36 @@ class TestLLMExtractLiteLLM:
         assert _resolve_api_key("gpt-4o-mini", keys) == "direct-key"
 
 
+class TestGraphSchemas:
+    def test_graph_config_request_schema(self):
+        """GraphConfigRequest accepts model and api_keys."""
+        from vectordb.models.schemas import GraphConfigRequest
+        r = GraphConfigRequest(model="ollama/llama3.2", api_keys={"api_key": "x"})
+        assert r.model == "ollama/llama3.2"
+        assert r.api_keys == {"api_key": "x"}
+
+    def test_graph_config_request_all_optional(self):
+        """GraphConfigRequest works with no fields (partial update)."""
+        from vectordb.models.schemas import GraphConfigRequest
+        r = GraphConfigRequest()
+        assert r.model is None
+        assert r.api_keys is None
+
+    def test_test_model_request_schema(self):
+        """TestModelRequest requires model and text."""
+        from vectordb.models.schemas import TestModelRequest
+        r = TestModelRequest(model="gpt-4o-mini", text="Apple acquired Beats.")
+        assert r.model == "gpt-4o-mini"
+        assert r.api_keys == {}
+
+    def test_benchmark_request_max_models(self):
+        """BenchmarkRequest rejects more than 5 models."""
+        from vectordb.models.schemas import BenchmarkRequest
+        from pydantic import ValidationError
+        with pytest.raises(ValidationError):
+            BenchmarkRequest(models=["m1", "m2", "m3", "m4", "m5", "m6"], text="text")
+
+
 class TestConfig:
     def test_new_graph_config_fields_present(self):
         """Config has encryption key and provider key fields; old ollama vars removed."""
