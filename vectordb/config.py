@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # pgvector HNSW query tuning
     pg_ef_search: int = 40            # higher = more accurate but slower
 
+    # GraphRAG extraction
+    graph_extraction_model: str = "gpt-4o-mini"
+    graph_extractor_version: str = "v1"
+    graph_worker_interval_s: int = 2
+    graph_worker_concurrency: int = 5
+    graph_max_collections: int = 50
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 
