@@ -78,6 +78,8 @@ class Collection(Base):
     description = Column(Text, nullable=True)
     user_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, server_default=func.now())
+    extraction_model = Column(String, nullable=True)
+    extraction_api_keys = Column(Text, nullable=True)
 
     vectors = relationship("Vector", back_populates="collection", cascade="all, delete-orphan")
 
