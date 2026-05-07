@@ -1022,11 +1022,12 @@ class SQLiteHNSWBackend(VectorBackend):
     async def get_pending_extraction_jobs(
         self, limit: int = 10
     ) -> List[dict]:
-        """Fetch pending jobs for the extraction worker."""
-        from vectordb.models.db import GraphExtractionJob
+        """Fetch pending jobs for the extraction worker, including collection LLM config."""
+        from vectordb.models.db import GraphExtractionJob, Collection
         async with self._session_factory() as session:
             rows = await session.execute(
-                select(GraphExtractionJob)
+                select(GraphExtractionJob, Collection.extraction_model, Collection.extraction_api_keys)
+                .join(Collection, Collection.id == GraphExtractionJob.collection_id)
                 .where(
                     GraphExtractionJob.status == "pending",
                     GraphExtractionJob.attempt_count < GraphExtractionJob.max_attempts,
@@ -1034,14 +1035,19 @@ class SQLiteHNSWBackend(VectorBackend):
                 .order_by(GraphExtractionJob.created_at)
                 .limit(limit)
             )
-            jobs = rows.scalars().all()
+            results = rows.all()
             return [
                 {
-                    "id": j.id, "collection_id": j.collection_id,
-                    "document_id": j.document_id, "chunk_id": j.chunk_id,
-                    "chunk_text": j.chunk_text, "attempt_count": j.attempt_count,
+                    "id": j.id,
+                    "collection_id": j.collection_id,
+                    "document_id": j.document_id,
+                    "chunk_id": j.chunk_id,
+                    "chunk_text": j.chunk_text,
+                    "attempt_count": j.attempt_count,
+                    "extraction_model": extraction_model,
+                    "extraction_api_keys": extraction_api_keys,
                 }
-                for j in jobs
+                for j, extraction_model, extraction_api_keys in results
             ]
 
     async def update_extraction_job(
