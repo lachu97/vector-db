@@ -7,15 +7,18 @@ blocked on DB I/O. HNSWlib operations (add, query) are kept synchronous
 because they are CPU-bound in-process operations (typically <5 ms) that do
 not benefit from async.
 """
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import structlog
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, JSON,
-    LargeBinary, String, Text, UniqueConstraint, event, func, select, update,
+    Boolean, Column, DateTime, ForeignKey, Index, Integer, JSON,
+    LargeBinary, String, Text, UniqueConstraint, delete as sa_delete, event, func, select, update,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base, relationship
 
 from vectordb.backends.base import (
@@ -70,6 +73,8 @@ class _Vector(Base):
 
     __table_args__ = (
         UniqueConstraint("collection_id", "external_id", name="uq_collection_external_id"),
+        Index("ix_vectors_collection_external", "collection_id", "external_id"),
+        Index("ix_vectors_collection_internal", "collection_id", "internal_id"),
     )
 
 
@@ -138,6 +143,9 @@ class SQLiteHNSWBackend(VectorBackend):
             self._engine, class_=AsyncSession, expire_on_commit=False
         )
         self._index_manager = IndexManager()
+        self._hnsw_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="hnsw"
+        )
         self._col_cache = CollectionCache(
             ttl=settings.collection_cache_ttl,
             max_size=settings.collection_cache_max_size,
@@ -162,15 +170,22 @@ class SQLiteHNSWBackend(VectorBackend):
                         select(_Vector).where(_Vector.collection_id == col.id)
                     )
                     rows = vecs_result.scalars().all()
-                    for row in rows:
-                        safe_add_to_index(indexer, decode_vector(row.vector), row.internal_id)
                     if rows:
+                        vectors_np = np.vstack([decode_vector(r.vector) for r in rows]).astype(np.float32)
+                        ids_np = np.array([r.internal_id for r in rows], dtype=np.int32)
+                        indexer.add_items(vectors_np, ids_np)
                         logger.info("index_rebuilt", collection=col.name, count=len(rows))
                 else:
                     logger.info("index_loaded", collection=col.name)
 
+    async def _knn_query(self, indexer, vector: np.ndarray, k: int):
+        """Run knn_query in a dedicated thread pool — releases the event loop during C++ CPU work."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._hnsw_executor, indexer.knn_query, vector, k)
+
     async def shutdown(self) -> None:
         """Persist HNSW indexes to disk."""
+        self._hnsw_executor.shutdown(wait=True)
         self._index_manager.save_all()
         await self._engine.dispose()
         logger.info("sqlite_hnsw_backend_shutdown")
@@ -420,8 +435,16 @@ class SQLiteHNSWBackend(VectorBackend):
                     indexer.mark_deleted(int(row.internal_id))
                 except Exception as e:
                     logger.warning("mark_deleted_failed", internal_id=row.internal_id, error=str(e))
-                await session.delete(row)
                 deleted.append(eid)
+
+            # Single bulk DELETE instead of N individual session.delete() calls
+            if deleted:
+                await session.execute(
+                    sa_delete(_Vector).where(
+                        _Vector.collection_id == col.id,
+                        _Vector.external_id.in_(deleted),
+                    )
+                )
             await session.commit()
 
         return {"deleted": deleted, "not_found": not_found, "deleted_count": len(deleted)}
@@ -452,7 +475,7 @@ class SQLiteHNSWBackend(VectorBackend):
         async with self._session_factory() as session:
             if filters:
                 fetch_k = min((k + offset) * FILTER_OVERSAMPLE, cur)
-                labels, distances = indexer.knn_query(q, k=fetch_k)
+                labels, distances = await self._knn_query(indexer, q, fetch_k)
 
                 # Batch fetch all candidate rows in one query
                 int_ids = [int(lbl) for lbl in labels]
@@ -503,7 +526,7 @@ class SQLiteHNSWBackend(VectorBackend):
                 return out[offset: offset + k]
             else:
                 k_safe = min(k + offset, max(1, cur))
-                labels, distances = indexer.knn_query(q, k=k_safe)
+                labels, distances = await self._knn_query(indexer, q, k_safe)
 
                 # Batch fetch all result rows in one query
                 int_ids = [int(lbl) for lbl in labels]
@@ -546,7 +569,7 @@ class SQLiteHNSWBackend(VectorBackend):
                 return []
 
             indexer.set_ef(ef)
-            labels, distances = indexer.knn_query(vec, k=k_safe + 1)
+            labels, distances = await self._knn_query(indexer, vec, k_safe + 1)
 
             # Batch fetch all candidate rows in one query
             int_ids = [int(lbl) for lbl in labels if lbl != row.internal_id]
@@ -643,7 +666,7 @@ class SQLiteHNSWBackend(VectorBackend):
             cur = indexer.get_current_count()
             if cur > 0:
                 fetch_k = min((k + offset) * 3, cur)
-                labels, distances = indexer.knn_query(q, k=fetch_k)
+                labels, distances = await self._knn_query(indexer, q, fetch_k)
 
                 int_ids = [int(lbl) for lbl in labels]
                 res = await session.execute(
@@ -784,14 +807,14 @@ class SQLiteHNSWBackend(VectorBackend):
                 return 0
             if not filters:
                 return await self._vec_count(session, col.id)
-            # Filtered count: must scan metadata
-            rows_res = await session.execute(
-                select(_Vector).where(_Vector.collection_id == col.id)
+            # Filtered count via SQL JSON predicates — avoids full table scan
+            from sqlalchemy import func as sa_func
+            stmt = select(sa_func.count(_Vector.internal_id)).where(
+                _Vector.collection_id == col.id
             )
-            return sum(
-                1 for r in rows_res.scalars().all()
-                if _matches_filters(r.meta, filters)
-            )
+            for key, value in filters.items():
+                stmt = stmt.where(_Vector.meta[key].as_string() == str(value))
+            return (await session.execute(stmt)).scalar_one() or 0
 
     async def export_vectors(
         self, collection_name: str, limit: int = 10000, user_id: Optional[int] = None
@@ -897,17 +920,21 @@ class SQLiteHNSWBackend(VectorBackend):
             current_cursor = start_id
 
             while len(collected) < limit and scanned < max_scan:
-                fetch_size = (limit - len(collected)) * 2 if filters else limit - len(collected) + 1
+                fetch_size = limit - len(collected) + 1  # filters pushed to SQL — no oversample needed
                 fetch_size = min(fetch_size, max_scan - scanned)
                 if fetch_size <= 0:
                     break
 
+                where_clauses = [
+                    _Vector.collection_id == col.id,
+                    _Vector.internal_id > current_cursor,
+                ]
+                if filters:
+                    for key, value in filters.items():
+                        where_clauses.append(_Vector.meta[key].as_string() == str(value))
                 stmt = (
                     select(_Vector)
-                    .where(
-                        _Vector.collection_id == col.id,
-                        _Vector.internal_id > current_cursor,
-                    )
+                    .where(*where_clauses)
                     .order_by(_Vector.internal_id)
                     .limit(fetch_size)
                 )
@@ -920,8 +947,6 @@ class SQLiteHNSWBackend(VectorBackend):
                 scanned += len(rows)
                 for row in rows:
                     current_cursor = row.internal_id
-                    if filters and not _matches_filters(row.meta, filters):
-                        continue
                     item = {
                         "external_id": row.external_id,
                         "metadata": row.meta,
