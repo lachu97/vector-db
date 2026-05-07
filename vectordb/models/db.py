@@ -2,7 +2,7 @@
 
 from sqlalchemy import (
     create_engine, Column, Integer, String, LargeBinary, JSON, Text,
-    DateTime, ForeignKey, UniqueConstraint, Boolean, event, func,
+    DateTime, ForeignKey, UniqueConstraint, Boolean, event, func, Float, Index,
 )
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
@@ -151,6 +151,72 @@ class UserUsageSummary(Base):
     )
 
     user = relationship("User", back_populates="usage_summaries")
+
+
+# ------------------------------------------------------------------
+# GraphRAG models
+# ------------------------------------------------------------------
+
+class GraphExtractionJob(Base):
+    __tablename__ = "graph_extraction_jobs"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    collection_id = Column(Integer, ForeignKey("collections.id"), nullable=False)
+    document_id = Column(Text, nullable=False)
+    chunk_id = Column(Text, nullable=False)
+    chunk_text = Column(Text, nullable=False)
+    status = Column(String, nullable=False, default="pending")  # pending|processing|completed|failed
+    attempt_count = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=3)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_graph_extraction_jobs_status_created_at", "status", "created_at"),
+        Index("ix_graph_extraction_jobs_document_id", "document_id"),
+    )
+
+
+class GraphEntity(Base):
+    __tablename__ = "graph_entities"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    collection_id = Column(Integer, ForeignKey("collections.id"), nullable=False)
+    entity_text = Column(Text, nullable=False)
+    entity_type = Column(String, nullable=True)  # PERSON|ORG|CONCEPT|PLACE|EVENT
+    document_id = Column(Text, nullable=False)
+    chunk_id = Column(Text, nullable=False)
+    vector_external_id = Column(Text, nullable=True)  # pointer to vectors.external_id
+    extractor_version = Column(Text, nullable=False)
+    model_name = Column(Text, nullable=False)
+    extraction_timestamp = Column(DateTime, server_default=func.now())
+    extraction_prompt_hash = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_graph_entities_collection_id", "collection_id"),
+        Index("ix_graph_entities_collection_id_entity_text", "collection_id", "entity_text"),
+        Index("ix_graph_entities_document_id", "document_id"),
+    )
+
+
+class GraphEdge(Base):
+    __tablename__ = "graph_edges"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    collection_id = Column(Integer, ForeignKey("collections.id"), nullable=False)
+    source_entity_id = Column(Integer, ForeignKey("graph_entities.id"), nullable=False)
+    target_entity_id = Column(Integer, ForeignKey("graph_entities.id"), nullable=False)
+    relation_type = Column(Text, nullable=False)
+    weight = Column(Float, nullable=False, default=1.0)
+    document_id = Column(Text, nullable=False)
+    chunk_id = Column(Text, nullable=False)
+    extractor_version = Column(Text, nullable=False)
+    model_name = Column(Text, nullable=False)
+    extraction_timestamp = Column(DateTime, server_default=func.now())
+
+    __table_args__ = (
+        Index("ix_graph_edges_source_entity_id", "source_entity_id"),
+        Index("ix_graph_edges_target_entity_id", "target_entity_id"),
+        Index("ix_graph_edges_document_id", "document_id"),
+    )
 
 
 # ------------------------------------------------------------------

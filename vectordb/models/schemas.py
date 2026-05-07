@@ -175,3 +175,38 @@ class AskRequest(BaseModel):
         if self.k < 1 or self.k > 20:
             raise ValueError("k must be between 1 and 20")
         return self
+
+
+# ------------------------------------------------------------------
+# GraphRAG schemas
+# ------------------------------------------------------------------
+
+class GraphSearchRequest(BaseModel):
+    query: str
+    k: int = 10
+    entity_types: Optional[List[str]] = None  # filter by PERSON|ORG|CONCEPT|PLACE|EVENT
+
+
+class GraphRelation(BaseModel):
+    relation_type: str
+    target_entity: str
+    target_type: Optional[str] = None
+    weight: float = 1.0
+
+
+class GraphEntityResult(BaseModel):
+    entity_text: str
+    entity_type: Optional[str]
+    relations: List[GraphRelation]
+    chunk_ids: List[str]
+
+
+class GraphSearchResponse(BaseModel):
+    entities: List[GraphEntityResult]
+    timing_ms: Optional[Dict[str, float]] = None
+
+
+class GraphStatusResponse(BaseModel):
+    jobs: Dict[str, int]        # {"pending": N, "processing": N, "completed": N, "failed": N}
+    entity_count: int
+    edge_count: int
