@@ -1,4 +1,5 @@
 """Graph RAG endpoints — /v1/collections/{name}/graph/..."""
+import asyncio
 import time
 from typing import List, Optional
 
@@ -6,14 +7,19 @@ import structlog
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from vectordb.auth import ApiKeyInfo, require_pro_or_scale, require_scale
+from vectordb.auth import ApiKeyInfo, require_admin, require_pro_or_scale, require_scale
 from vectordb.backends import get_backend
 from vectordb.backends.base import VectorBackend
+from vectordb.config import get_settings
 from vectordb.models.db import get_db
 from vectordb.models.schemas import (
+    BenchmarkRequest,
+    BenchmarkResponse,
     GraphAskRequest,
     GraphAskResponse,
     GraphCommunity,
+    GraphConfigRequest,
+    GraphConfigResponse,
     GraphEntityResult,
     GraphPathRequest,
     GraphPathResponse,
@@ -23,13 +29,18 @@ from vectordb.models.schemas import (
     GraphSearchResponse,
     GraphSummarizeRequest,
     GraphSummarizeResponse,
+    TestModelRequest,
+    TestModelResponse,
 )
+from vectordb.services.graph_encryption import decrypt_api_keys, encrypt_api_keys
+from vectordb.services.graph_extraction import _build_server_keys, llm_extract
 from vectordb.services.graph_manager import graph_manager
 from vectordb.services.graph_retrieval import community_detection, path_analysis, graph_ask_pipeline
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/v1/collections", tags=["graph"])
+admin_router = APIRouter(prefix="/v1/admin", tags=["graph-admin"])
 
 
 @router.get("/{name}/graph/status")
@@ -55,6 +66,40 @@ async def graph_status(
         "entity_count": entity_count,
         "edge_count": edge_count,
     })
+
+
+@router.patch("/{name}/graph/config")
+async def graph_config_update(
+    name: str,
+    req: GraphConfigRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Set per-collection LLM model and encrypted API keys for graph extraction."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    settings = get_settings()
+
+    from vectordb.models.db import Collection
+    db: Session = next(get_db())
+    try:
+        collection = db.query(Collection).filter(Collection.id == col["id"]).first()
+        if req.model is not None:
+            collection.extraction_model = req.model
+        if req.api_keys is not None:
+            collection.extraction_api_keys = encrypt_api_keys(req.api_keys, settings.graph_encryption_key)
+        db.commit()
+        api_keys_set = collection.extraction_api_keys is not None
+        model = collection.extraction_model
+    finally:
+        db.close()
+
+    return success_response(GraphConfigResponse(
+        model=model,
+        api_keys_set=api_keys_set,
+    ).model_dump())
 
 
 @router.post("/{name}/graph/search")

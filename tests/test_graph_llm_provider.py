@@ -173,6 +173,41 @@ class TestGraphSchemas:
             BenchmarkRequest(models=["m1", "m2", "m3", "m4", "m5", "m6"], text="text")
 
 
+class TestGraphConfigEndpoint:
+    def test_patch_graph_config_sets_model(self, client):
+        """PATCH /graph/config stores model on collection."""
+        client.post("/v1/collections", json={"name": "cfg-test", "dim": 4}, headers={"x-api-key": "test-key"})
+        resp = client.patch(
+            "/v1/collections/cfg-test/graph/config",
+            json={"model": "ollama/llama3.2"},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["model"] == "ollama/llama3.2"
+        assert data["api_keys_set"] is False
+
+    def test_patch_graph_config_sets_api_keys(self, client):
+        """PATCH /graph/config encrypts and stores api_keys."""
+        client.post("/v1/collections", json={"name": "cfg-keys", "dim": 4}, headers={"x-api-key": "test-key"})
+        resp = client.patch(
+            "/v1/collections/cfg-keys/graph/config",
+            json={"model": "gpt-4o-mini", "api_keys": {"OPENAI_API_KEY": "sk-test"}},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["api_keys_set"] is True
+
+    def test_patch_graph_config_404_on_unknown_collection(self, client):
+        """Returns error for unknown collection."""
+        resp = client.patch(
+            "/v1/collections/no-such/graph/config",
+            json={"model": "gpt-4o-mini"},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.json()["error"]["code"] == 404
+
+
 class TestConfig:
     def test_new_graph_config_fields_present(self):
         """Config has encryption key and provider key fields; old ollama vars removed."""
