@@ -43,34 +43,13 @@ If no entities found, return {{"entities": [], "edges": []}}.
 Text:
 {chunk_text}"""
 
-# Lazy singleton for the async OpenAI client (separate from llm_service to avoid sharing state)
-_extraction_client = None
-
-
-def _get_extraction_client():
-    """Lazy singleton for AsyncOpenAI client used by the extraction worker."""
-    global _extraction_client
-    if _extraction_client is not None:
-        return _extraction_client
-    settings = get_settings()
-    if not settings.openai_api_key:
-        return None
-    from openai import AsyncOpenAI
-    _extraction_client = AsyncOpenAI(api_key=settings.openai_api_key)
-    return _extraction_client
-
-
-async def llm_extract(chunk_text: str, settings) -> Tuple[List[dict], List[dict]]:
+async def llm_extract(chunk_text: str, settings, client=None) -> Tuple[List[dict], List[dict]]:
     """
     Call OpenAI to extract entities and relationships from chunk_text.
     Returns (entities_list, edges_list).
     Falls back to ([], []) if OpenAI key not configured or call fails.
     """
-    if not settings.openai_api_key:
-        return [], []
-
-    client = _get_extraction_client()
-    if client is None:
+    if not settings.openai_api_key or client is None:
         return [], []
 
     prompt = EXTRACTION_PROMPT.format(chunk_text=chunk_text)
@@ -121,7 +100,7 @@ async def llm_extract(chunk_text: str, settings) -> Tuple[List[dict], List[dict]
         return [], []
 
 
-async def _process_one_job(job: dict, backend, settings, semaphore: asyncio.Semaphore) -> None:
+async def _process_one_job(job: dict, backend, settings, semaphore: asyncio.Semaphore, client) -> None:
     """Process a single extraction job under the concurrency semaphore."""
     async with semaphore:
         job_id = job["id"]
@@ -130,7 +109,7 @@ async def _process_one_job(job: dict, backend, settings, semaphore: asyncio.Sema
         await backend.update_extraction_job(job_id, "processing")
 
         try:
-            entities, edges = await llm_extract(job["chunk_text"], settings)
+            entities, edges = await llm_extract(job["chunk_text"], settings, client)
 
             # Resolve collection_id to sync DB session for graph_manager
             from vectordb.models.db import get_db
@@ -169,17 +148,17 @@ async def _process_one_job(job: dict, backend, settings, semaphore: asyncio.Sema
         except Exception as e:
             logger.warning("extraction_job_failed", job_id=job_id, error=str(e))
 
-            # Retry logic: attempt_count was incremented when we set status='processing'.
-            # job["attempt_count"] is the value *before* this attempt, so after the
-            # increment it is job["attempt_count"] + 1.
-            attempts_used = job.get("attempt_count", 0) + 1
-            if attempts_used < MAX_ATTEMPTS:
+            # attempt_number is 1-indexed: job["attempt_count"] holds the count
+            # before this attempt; setting status='processing' increments it in the DB,
+            # so the current attempt is attempt_count + 1.
+            attempt_number = job.get("attempt_count", 0) + 1
+            if attempt_number < MAX_ATTEMPTS:
                 # Re-queue for another attempt
                 await backend.update_extraction_job(job_id, "pending")
                 logger.info(
                     "extraction_job_requeued",
                     job_id=job_id,
-                    attempts_used=attempts_used,
+                    attempt_number=attempt_number,
                     max_attempts=MAX_ATTEMPTS,
                 )
             else:
@@ -190,17 +169,17 @@ async def _process_one_job(job: dict, backend, settings, semaphore: asyncio.Sema
                 logger.warning(
                     "extraction_job_exhausted",
                     job_id=job_id,
-                    attempts_used=attempts_used,
+                    attempt_number=attempt_number,
                 )
 
 
-async def _process_pending_jobs(backend, settings, semaphore: asyncio.Semaphore) -> None:
+async def _process_pending_jobs(backend, settings, semaphore: asyncio.Semaphore, client) -> None:
     """Process up to 10 pending jobs in one pass."""
     jobs = await backend.get_pending_extraction_jobs(limit=10)
     if not jobs:
         return
 
-    tasks = [_process_one_job(job, backend, settings, semaphore) for job in jobs]
+    tasks = [_process_one_job(job, backend, settings, semaphore, client) for job in jobs]
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
@@ -215,6 +194,13 @@ async def start_extraction_worker(backend) -> None:
     settings = get_settings()
     semaphore = asyncio.Semaphore(settings.graph_worker_concurrency)
 
+    # Initialize the OpenAI client once here — avoids global mutable state and
+    # race conditions that a lazy singleton would introduce in an async context.
+    client = None
+    if settings.openai_api_key:
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+
     # Crash recovery: reset any jobs stuck in 'processing' from a previous crash
     try:
         await backend.reset_processing_jobs()
@@ -224,7 +210,7 @@ async def start_extraction_worker(backend) -> None:
 
     while True:
         try:
-            await _process_pending_jobs(backend, settings, semaphore)
+            await _process_pending_jobs(backend, settings, semaphore, client)
         except Exception as e:
             logger.warning("extraction_worker_error", error=str(e))
         await asyncio.sleep(settings.graph_worker_interval_s)
