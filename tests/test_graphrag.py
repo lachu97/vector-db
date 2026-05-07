@@ -328,36 +328,24 @@ class TestGraphManager:
 
 class TestLLMExtract:
 
-    def test_llm_extract_no_api_key_returns_empty(self):
-        """Returns empty lists when no OpenAI key configured."""
+    def test_llm_extract_no_model_returns_empty(self):
+        """Returns empty lists when model is empty string."""
         from vectordb.services.graph_extraction import llm_extract
-
-        settings = MagicMock()
-        settings.openai_api_key = ""
-
-        entities, edges = asyncio.run(llm_extract("some text about Apple and Beats", settings, client=None))
+        entities, edges = asyncio.run(llm_extract("some text", model="", api_keys={}))
         assert entities == []
         assert edges == []
 
-    def test_llm_extract_no_client_returns_empty(self):
-        """Returns empty lists when client is None, even if key is set."""
+    def test_llm_extract_none_model_returns_empty(self):
+        """Returns empty lists when model is None."""
         from vectordb.services.graph_extraction import llm_extract
-
-        settings = MagicMock()
-        settings.openai_api_key = "sk-fake"
-
-        entities, edges = asyncio.run(llm_extract("some text", settings, client=None))
+        entities, edges = asyncio.run(llm_extract("some text", model=None, api_keys={}))
         assert entities == []
         assert edges == []
 
     def test_llm_extract_empty_text_returns_empty(self):
-        """Returns empty lists for empty text (no API key)."""
+        """Returns empty lists for empty text with no model."""
         from vectordb.services.graph_extraction import llm_extract
-
-        settings = MagicMock()
-        settings.openai_api_key = ""
-
-        entities, edges = asyncio.run(llm_extract("", settings, client=None))
+        entities, edges = asyncio.run(llm_extract("", model="", api_keys={}))
         assert entities == []
         assert edges == []
 

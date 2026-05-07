@@ -40,6 +40,109 @@ class TestGraphEncryption:
             decrypt_api_keys(blob, "b" * 64)
 
 
+class TestLLMExtractLiteLLM:
+    def test_llm_extract_no_model_returns_empty(self):
+        """Empty model string returns empty lists immediately."""
+        from vectordb.services.graph_extraction import llm_extract
+        entities, edges = asyncio.run(llm_extract("Some text.", model="", api_keys={}))
+        assert entities == []
+        assert edges == []
+
+    def test_llm_extract_none_model_returns_empty(self):
+        """None model returns empty lists."""
+        from vectordb.services.graph_extraction import llm_extract
+        entities, edges = asyncio.run(llm_extract("Some text.", model=None, api_keys={}))
+        assert entities == []
+        assert edges == []
+
+    def test_llm_extract_calls_litellm_with_model(self):
+        """llm_extract passes model string and api_key to litellm.acompletion."""
+        from vectordb.services.graph_extraction import llm_extract
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"entities": [{"entity_text": "Apple", "entity_type": "ORG"}], "edges": []}'
+
+        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)) as mock_call:
+            entities, edges = asyncio.run(llm_extract(
+                "Apple makes iPhones.",
+                model="gpt-4o-mini",
+                api_keys={"api_key": "sk-test"},
+            ))
+
+        mock_call.assert_called_once()
+        call_kwargs = mock_call.call_args.kwargs
+        assert call_kwargs["model"] == "gpt-4o-mini"
+        assert call_kwargs["api_key"] == "sk-test"
+        assert len(entities) == 1
+        assert entities[0]["entity_text"] == "Apple"
+        assert edges == []
+
+    def test_llm_extract_ollama_no_api_key(self):
+        """Ollama model string passes no api_key kwarg."""
+        from vectordb.services.graph_extraction import llm_extract
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"entities": [], "edges": []}'
+
+        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)) as mock_call:
+            asyncio.run(llm_extract("text", model="ollama/llama3.2", api_keys={}))
+
+        call_kwargs = mock_call.call_args.kwargs
+        assert call_kwargs.get("api_key") is None
+
+    def test_llm_extract_malformed_json_returns_empty(self):
+        """Model returns non-JSON → empty lists, no exception."""
+        from vectordb.services.graph_extraction import llm_extract
+
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "Sure! Here are the entities..."
+
+        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)):
+            entities, edges = asyncio.run(llm_extract("text", model="gpt-4o-mini", api_keys={}))
+
+        assert entities == []
+        assert edges == []
+
+    def test_llm_extract_exception_returns_empty(self):
+        """LiteLLM raises → empty lists, no exception propagated."""
+        from vectordb.services.graph_extraction import llm_extract
+
+        with patch("litellm.acompletion", new=AsyncMock(side_effect=Exception("AuthenticationError"))):
+            entities, edges = asyncio.run(llm_extract("text", model="gpt-4o-mini", api_keys={"api_key": "bad"}))
+
+        assert entities == []
+        assert edges == []
+
+    def test_resolve_api_key_openai(self):
+        """OpenAI model resolves OPENAI_API_KEY from dict."""
+        from vectordb.services.graph_extraction import _resolve_api_key
+        keys = {"OPENAI_API_KEY": "sk-open", "GEMINI_API_KEY": "gm-key"}
+        assert _resolve_api_key("gpt-4o-mini", keys) == "sk-open"
+
+    def test_resolve_api_key_gemini(self):
+        """Gemini model resolves GEMINI_API_KEY from dict."""
+        from vectordb.services.graph_extraction import _resolve_api_key
+        keys = {"OPENAI_API_KEY": "sk-open", "GEMINI_API_KEY": "gm-key"}
+        assert _resolve_api_key("gemini/gemini-1.5-flash", keys) == "gm-key"
+
+    def test_resolve_api_key_anthropic(self):
+        """Anthropic model resolves ANTHROPIC_API_KEY from dict."""
+        from vectordb.services.graph_extraction import _resolve_api_key
+        keys = {"ANTHROPIC_API_KEY": "sk-ant"}
+        assert _resolve_api_key("anthropic/claude-haiku-4-5", keys) == "sk-ant"
+
+    def test_resolve_api_key_ollama_returns_none(self):
+        """Ollama model returns None (no key needed)."""
+        from vectordb.services.graph_extraction import _resolve_api_key
+        assert _resolve_api_key("ollama/llama3.2", {"OPENAI_API_KEY": "sk"}) is None
+
+    def test_resolve_api_key_direct_override(self):
+        """api_key in dict takes precedence over provider-specific keys."""
+        from vectordb.services.graph_extraction import _resolve_api_key
+        keys = {"api_key": "direct-key", "OPENAI_API_KEY": "sk-other"}
+        assert _resolve_api_key("gpt-4o-mini", keys) == "direct-key"
+
+
 class TestConfig:
     def test_new_graph_config_fields_present(self):
         """Config has encryption key and provider key fields; old ollama vars removed."""
