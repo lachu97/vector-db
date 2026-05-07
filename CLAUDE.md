@@ -103,6 +103,15 @@ All endpoints (except `/`) require `x-api-key` header.
 | DELETE | `/v1/collections/{name}/delete/{id}` | Delete single vector |
 | POST | `/v1/collections/{name}/delete_batch` | Batch delete vectors |
 
+### GraphRAG Endpoints (Pro/Scale tier required)
+| Method | Endpoint | Tier | Purpose |
+|--------|----------|------|---------|
+| GET | `/v1/collections/{name}/graph/status` | Pro/Scale | Job queue counts + entity/edge cardinality |
+| POST | `/v1/collections/{name}/graph/search` | Pro/Scale | Fuzzy entity search over knowledge graph |
+| POST | `/v1/collections/{name}/graph/path` | Pro/Scale | Shortest paths between entity pairs |
+| POST | `/v1/collections/{name}/graph/summarize` | Scale only | Louvain community detection + cluster summaries |
+| POST | `/v1/collections/{name}/graph/ask` | Scale only | Full GraphRAG pipeline: entities → context → LLM answer |
+
 ### Legacy Endpoints (route to "default" collection)
 | Method | Endpoint |
 |--------|----------|
@@ -252,7 +261,7 @@ alembic downgrade -1
 - [x] Admin dashboard UI (React/Next.js) — `vector-db-web`
 - [x] Documentation site (`docs/`) — Mintlify, 30 pages, full API reference + OpenAPI spec
 
-### Phase 7.5: GraphRAG (Pro/Scale Feature) — Phase 1 Complete
+### Phase 7.5: GraphRAG (Pro/Scale Feature) — Phases 1-4 Complete
 - [x] SQLAlchemy ORM models: GraphEntity, GraphEdge, GraphExtractionJob
 - [x] Alembic migration for 3 graph tables with composite indexes
 - [x] GraphManager service — lazy-load per-collection networkx.MultiDiGraph, double-checked lock, zero startup cost
@@ -261,9 +270,9 @@ alembic downgrade -1
 - [x] `POST /v1/collections/{name}/graph/search` — entity-centric search over MultiDiGraph (Pro/Scale)
 - [x] Tier gate: `require_pro_or_scale` dependency — 403 for free/starter, bootstrap key always allowed
 - [x] Document upload → enqueue extraction jobs (non-blocking)
-- [ ] Phase 2: `/graph/path` — relationship path finding (planned)
-- [ ] Phase 3: `/graph/summarize` — community detection via Louvain (planned, Scale only)
-- [ ] Phase 4: `/graph/ask` — full 6-step retrieval pipeline (planned)
+- [x] Phase 2: `POST /v1/collections/{name}/graph/path` — shortest path between entity pairs, multi-hop traversal, directed+undirected fallback (Pro/Scale)
+- [x] Phase 3: `POST /v1/collections/{name}/graph/summarize` — Louvain community detection, central entity per cluster (Scale only)
+- [x] Phase 4: `POST /v1/collections/{name}/graph/ask` — full 6-step pipeline: entity retrieval → neighborhood expansion → path analysis → graph reranking → context assembly → LLM answer (Scale only)
 
 ### Phase 7: Cloud & Managed Service
 - [ ] Managed hosting (free/pro/scale tiers)
