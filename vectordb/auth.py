@@ -211,3 +211,29 @@ async def require_pro_or_scale(
         except Exception:
             pass
     return info
+
+
+async def require_scale(
+    request: Request,
+    api_key: Optional[str] = Depends(api_key_header),
+    db: Session = Depends(get_db),
+) -> ApiKeyInfo:
+    """FastAPI dependency — gates access to Scale-only features (community detection)."""
+    info = _lookup_key(api_key, db)
+    if info.user_id is not None:
+        user = db.query(User).filter_by(id=info.user_id).first()
+        if user and user.tier != "scale":
+            raise HTTPException(
+                status_code=403,
+                detail="This feature requires Scale tier. Upgrade at /pricing",
+            )
+    try:
+        _auth_post_check(db, info, request)
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    return info

@@ -2,7 +2,7 @@
 Graph retrieval pipeline — modular functions for /graph/ask and graph endpoints.
 
 Phase 2: path_analysis — shortest paths between entity pairs
-Phase 3: community_detection — Louvain community detection (added later)
+Phase 3: community_detection — Louvain community detection
 Phase 4: full pipeline (added later)
 """
 import networkx as nx
@@ -109,3 +109,81 @@ def path_analysis(
         )
 
     return result
+
+
+def community_detection(
+    graph: nx.MultiDiGraph,
+    max_communities: int = 10,
+) -> List[Dict[str, Any]]:
+    """
+    Detect communities using Louvain algorithm on the undirected projection of the graph.
+
+    Returns list of community dicts:
+    [
+      {
+        "id": int,
+        "size": int,
+        "entities": [{"entity_text": str, "entity_type": str|None}],
+        "central_entity": str | None   # highest-degree node in community
+      }
+    ]
+
+    Returns [] if graph has no nodes or python-louvain is not installed.
+    Limits to top max_communities by size.
+    """
+    if graph.number_of_nodes() == 0:
+        return []
+
+    try:
+        import community as community_louvain
+    except ImportError:
+        return []
+
+    # Louvain requires undirected graph
+    undirected = graph.to_undirected()
+
+    # Remove self-loops (can cause issues)
+    undirected.remove_edges_from(nx.selfloop_edges(undirected))
+
+    if undirected.number_of_edges() == 0:
+        # No edges — each node is its own community
+        communities: Dict[int, int] = {node: i for i, node in enumerate(undirected.nodes())}
+    else:
+        communities = community_louvain.best_partition(undirected)
+
+    # Group nodes by community id
+    community_groups: Dict[int, List[int]] = {}
+    for node_id, comm_id in communities.items():
+        community_groups.setdefault(comm_id, []).append(node_id)
+
+    results = []
+    for comm_id, node_ids in sorted(community_groups.items(), key=lambda x: -len(x[1])):
+        entities = []
+        for nid in node_ids:
+            nd = graph.nodes.get(nid, {})
+            entities.append({
+                "entity_text": nd.get("entity_text", str(nid)),
+                "entity_type": nd.get("entity_type"),
+            })
+
+        # Central entity = highest degree in the community subgraph
+        central_entity = None
+        if node_ids:
+            sub = undirected.subgraph(node_ids)
+            try:
+                central_id = max(sub.degree(), key=lambda x: x[1])[0]
+                central_entity = graph.nodes.get(central_id, {}).get("entity_text")
+            except (ValueError, StopIteration):
+                pass
+
+        results.append({
+            "id": comm_id,
+            "size": len(node_ids),
+            "entities": entities,
+            "central_entity": central_entity,
+        })
+
+        if len(results) >= max_communities:
+            break
+
+    return results

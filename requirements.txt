@@ -30,3 +30,6 @@ sentence-transformers
 openai>=1.0.0
 msgpack
 python-multipart
+# Phase 7.5: GraphRAG Phase 3 — community detection
+python-louvain>=0.16
+networkx

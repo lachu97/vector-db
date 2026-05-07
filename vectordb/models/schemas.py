@@ -230,3 +230,18 @@ class GraphPathResponse(BaseModel):
     path_count: int
     shortest_hop_count: Optional[int] = None
     timing_ms: Optional[Dict[str, float]] = None
+
+
+class GraphSummarizeRequest(BaseModel):
+    max_communities: int = 10
+
+class GraphCommunity(BaseModel):
+    id: int
+    size: int
+    entities: List[Dict[str, Any]]
+    central_entity: Optional[str] = None
+
+class GraphSummarizeResponse(BaseModel):
+    communities: List[GraphCommunity]
+    total_communities: int
+    timing_ms: Optional[Dict[str, float]] = None

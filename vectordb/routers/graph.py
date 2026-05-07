@@ -6,11 +6,12 @@ import structlog
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from vectordb.auth import ApiKeyInfo, require_pro_or_scale
+from vectordb.auth import ApiKeyInfo, require_pro_or_scale, require_scale
 from vectordb.backends import get_backend
 from vectordb.backends.base import VectorBackend
 from vectordb.models.db import get_db
 from vectordb.models.schemas import (
+    GraphCommunity,
     GraphEntityResult,
     GraphPathRequest,
     GraphPathResponse,
@@ -18,9 +19,11 @@ from vectordb.models.schemas import (
     GraphRelation,
     GraphSearchRequest,
     GraphSearchResponse,
+    GraphSummarizeRequest,
+    GraphSummarizeResponse,
 )
 from vectordb.services.graph_manager import graph_manager
-from vectordb.services.graph_retrieval import path_analysis
+from vectordb.services.graph_retrieval import community_detection, path_analysis
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -155,5 +158,35 @@ async def graph_path(
         path_count=result["path_count"],
         shortest_hop_count=result.get("shortest_hop_count"),
         timing_ms={"path_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/summarize")
+async def graph_summarize(
+    name: str,
+    req: GraphSummarizeRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_scale),   # Scale only
+):
+    """Detect communities in the collection's knowledge graph using Louvain algorithm."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        communities_raw = community_detection(graph, max_communities=req.max_communities)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    communities = [GraphCommunity(**c) for c in communities_raw]
+    response = GraphSummarizeResponse(
+        communities=communities,
+        total_communities=len(communities),
+        timing_ms={"summarize_ms": elapsed_ms},
     )
     return success_response(response.model_dump())

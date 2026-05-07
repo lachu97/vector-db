@@ -495,3 +495,90 @@ class TestGraphPath:
 
         result = path_analysis(G, "Apple", "NonExistent", max_hops=4)
         assert result["path_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: Community Detection + /graph/summarize
+# ---------------------------------------------------------------------------
+
+class TestGraphSummarize:
+    def test_summarize_requires_scale(self, client):
+        # Pro tier should get 403
+        import uuid
+        email = f"pro-{uuid.uuid4()}@test.com"
+        reg = client.post("/v1/auth/register",
+                          json={"email": email, "password": "password123"})
+        pro_key = reg.json()["data"]["api_key"]["key"]
+        # Manually set tier to 'pro' via DB
+        from vectordb.models.db import get_db, User
+        from vectordb.models.db import ApiKey
+        db = next(get_db())
+        try:
+            key_row = db.query(ApiKey).filter_by(key=pro_key).first()
+            if key_row and key_row.user_id:
+                user = db.query(User).filter_by(id=key_row.user_id).first()
+                if user:
+                    user.tier = "pro"
+                    db.commit()
+        finally:
+            db.close()
+        client.post("/v1/collections", json={"name": "sum-test-pro", "dim": 4},
+                    headers={"x-api-key": pro_key})
+        resp = client.post(
+            "/v1/collections/sum-test-pro/graph/summarize",
+            json={"max_communities": 5},
+            headers={"x-api-key": pro_key},
+        )
+        assert resp.status_code == 403
+
+    def test_summarize_bootstrap_key_allowed(self, client):
+        client.post("/v1/collections", json={"name": "sum-bootstrap", "dim": 4},
+                    headers={"x-api-key": "test-key"})
+        resp = client.post(
+            "/v1/collections/sum-bootstrap/graph/summarize",
+            json={"max_communities": 5},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert "communities" in data
+        assert data["total_communities"] == 0  # empty graph
+
+    def test_summarize_collection_not_found(self, client):
+        resp = client.post(
+            "/v1/collections/nonexistent/graph/summarize",
+            json={"max_communities": 5},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "error"
+
+    def test_community_detection_unit(self):
+        """Unit test community_detection with a simple graph."""
+        import networkx as nx
+        from vectordb.services.graph_retrieval import community_detection
+
+        G = nx.MultiDiGraph()
+        # Cluster 1: Apple, Beats, Music (connected)
+        G.add_node(1, entity_text="Apple", entity_type="ORG")
+        G.add_node(2, entity_text="Beats", entity_type="ORG")
+        G.add_node(3, entity_text="Music", entity_type="CONCEPT")
+        G.add_edge(1, 2, relation_type="acquired", weight=1.0)
+        G.add_edge(2, 3, relation_type="produces", weight=1.0)
+        # Cluster 2: Google, YouTube (connected)
+        G.add_node(4, entity_text="Google", entity_type="ORG")
+        G.add_node(5, entity_text="YouTube", entity_type="ORG")
+        G.add_edge(4, 5, relation_type="owns", weight=1.0)
+
+        result = community_detection(G, max_communities=10)
+        # Should detect communities (at least 1, probably 2)
+        assert len(result) >= 1
+        assert all("id" in c and "size" in c and "entities" in c for c in result)
+
+    def test_community_detection_empty_graph(self):
+        import networkx as nx
+        from vectordb.services.graph_retrieval import community_detection
+
+        G = nx.MultiDiGraph()
+        result = community_detection(G)
+        assert result == []
