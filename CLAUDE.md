@@ -212,6 +212,11 @@ alembic downgrade -1
 | DB_URL | sqlite:///./vectors.db | Database connection string |
 | PORT | 8000 | Server port |
 | WORKERS | 4 | Gunicorn worker count |
+| GRAPH_EXTRACTION_MODEL | gpt-4o-mini | LLM model for entity/relationship extraction |
+| GRAPH_EXTRACTOR_VERSION | v1 | Bump to trigger graph re-extraction for all chunks |
+| GRAPH_WORKER_INTERVAL_S | 2 | Extraction worker poll interval (seconds) |
+| GRAPH_WORKER_CONCURRENCY | 5 | Max parallel LLM extraction calls |
+| GRAPH_MAX_COLLECTIONS | 50 | Max graphs held in memory simultaneously |
 
 ---
 
@@ -246,6 +251,19 @@ alembic downgrade -1
 - [x] CLI tool (`sdk/python/vectordb_client/cli/`) — `vdb` command, 46 tests
 - [x] Admin dashboard UI (React/Next.js) — `vector-db-web`
 - [x] Documentation site (`docs/`) — Mintlify, 30 pages, full API reference + OpenAPI spec
+
+### Phase 7.5: GraphRAG (Pro/Scale Feature) — Phase 1 Complete
+- [x] SQLAlchemy ORM models: GraphEntity, GraphEdge, GraphExtractionJob
+- [x] Alembic migration for 3 graph tables with composite indexes
+- [x] GraphManager service — lazy-load per-collection networkx.MultiDiGraph, double-checked lock, zero startup cost
+- [x] Extraction worker — SQLite-backed job queue, async polling, LLM entity/relationship extraction, retry logic, crash recovery
+- [x] `GET /v1/collections/{name}/graph/status` — job queue counts + entity/edge cardinality (Pro/Scale)
+- [x] `POST /v1/collections/{name}/graph/search` — entity-centric search over MultiDiGraph (Pro/Scale)
+- [x] Tier gate: `require_pro_or_scale` dependency — 403 for free/starter, bootstrap key always allowed
+- [x] Document upload → enqueue extraction jobs (non-blocking)
+- [ ] Phase 2: `/graph/path` — relationship path finding (planned)
+- [ ] Phase 3: `/graph/summarize` — community detection via Louvain (planned, Scale only)
+- [ ] Phase 4: `/graph/ask` — full 6-step retrieval pipeline (planned)
 
 ### Phase 7: Cloud & Managed Service
 - [ ] Managed hosting (free/pro/scale tiers)
@@ -286,3 +304,14 @@ alembic downgrade -1
 - **Option C:** Auto-generate an admin API key for each new user on registration and return it in the response.
 
 **Impact:** Until this is solved, the frontend cannot properly isolate users. All users effectively share the same backend scope.
+
+## GraphRAG — Future Migration Note (Option C: Neo4j)
+
+When per-collection graph size exceeds available RAM (>1M entities or >10M edges), migrate `GraphManager` from networkx to Neo4j:
+- Replace `nx.MultiDiGraph` with `neo4j` Python async driver
+- Keep same `GraphManager` interface — routers and retrieval pipeline unchanged
+- Cypher replaces networkx BFS/shortest_path calls
+- Deploy Neo4j as separate service in `docker-compose.yml`
+- Trigger: single collection graph exceeds ~750MB RAM OR networkx BFS latency >100ms p95
+- Intermediate option: `igraph` (C backend, 10x memory efficient) or `rustworkx` (Rust, 5x faster BFS)
+- Current architecture handles corpora up to ~50k documents per collection comfortably
