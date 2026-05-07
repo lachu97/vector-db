@@ -36,8 +36,8 @@ async def graph_status(
 
     db: Session = next(get_db())
     try:
-        stats = await graph_manager.get_job_stats(col.id, db)
-        entity_count, edge_count = await graph_manager.get_counts(col.id, db)
+        stats = await graph_manager.get_job_stats(col["id"], db)
+        entity_count, edge_count = await graph_manager.get_counts(col["id"], db)
     finally:
         db.close()
 
@@ -63,7 +63,7 @@ async def graph_search(
     db: Session = next(get_db())
     try:
         t0 = time.perf_counter()
-        graph = await graph_manager.get_graph(col.id, db)
+        graph = await graph_manager.get_graph(col["id"], db)
         search_ms = round((time.perf_counter() - t0) * 1000, 2)
     finally:
         db.close()

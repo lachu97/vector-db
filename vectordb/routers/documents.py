@@ -72,7 +72,7 @@ async def upload_document(
             "chunk_text": file_text[:4000],  # trim to avoid huge payloads
         }]
         col_row = await backend.get_collection(collection_name, user_id=auth.user_id)
-        await backend.enqueue_extraction_jobs(col_row.id, jobs)
+        await backend.enqueue_extraction_jobs(col_row["id"], jobs)
         logger.info("graph_extraction_enqueued", document_id=document_id, chunks=len(jobs))
     except Exception as e:
         logger.warning("graph_extraction_enqueue_failed", error=str(e))

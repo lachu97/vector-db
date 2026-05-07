@@ -94,6 +94,7 @@ def _matches_filters(meta: Optional[dict], filters: dict) -> bool:
 
 def _col_to_dict(col: _Collection, vec_count: int) -> Dict[str, Any]:
     return {
+        "id": col.id,
         "name": col.name,
         "dim": col.dim,
         "distance_metric": col.distance_metric,
