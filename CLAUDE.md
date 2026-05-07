@@ -221,7 +221,11 @@ alembic downgrade -1
 | DB_URL | sqlite:///./vectors.db | Database connection string |
 | PORT | 8000 | Server port |
 | WORKERS | 4 | Gunicorn worker count |
-| GRAPH_EXTRACTION_MODEL | gpt-4o-mini | LLM model for entity/relationship extraction |
+| GRAPH_EXTRACTION_MODEL | gpt-4o-mini | LiteLLM model string (any provider: `gpt-4o-mini`, `gemini/gemini-1.5-flash`, `ollama/llama3.2`, etc.) |
+| GRAPH_ENCRYPTION_KEY | (empty) | 32-byte hex key for encrypting per-collection API keys. Generate: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| OPENAI_API_KEY | (empty) | Server-level OpenAI key (fallback for all collections) |
+| GEMINI_API_KEY | (empty) | Server-level Gemini key |
+| ANTHROPIC_API_KEY | (empty) | Server-level Anthropic key |
 | GRAPH_EXTRACTOR_VERSION | v1 | Bump to trigger graph re-extraction for all chunks |
 | GRAPH_WORKER_INTERVAL_S | 2 | Extraction worker poll interval (seconds) |
 | GRAPH_WORKER_CONCURRENCY | 5 | Max parallel LLM extraction calls |
