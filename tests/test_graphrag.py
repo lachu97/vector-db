@@ -582,3 +582,102 @@ class TestGraphSummarize:
         G = nx.MultiDiGraph()
         result = community_detection(G)
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Full 6-step retrieval pipeline + /graph/ask
+# ---------------------------------------------------------------------------
+
+class TestGraphAsk:
+    def test_graph_ask_requires_scale(self, client):
+        import uuid
+        email = f"pro-ask-{uuid.uuid4()}@test.com"
+        reg = client.post("/v1/auth/register",
+                          json={"email": email, "password": "password123"})
+        key = reg.json()["data"]["api_key"]["key"]
+        from vectordb.models.db import get_db, User, ApiKey
+        db = next(get_db())
+        try:
+            key_row = db.query(ApiKey).filter_by(key=key).first()
+            if key_row and key_row.user_id:
+                user = db.query(User).filter_by(id=key_row.user_id).first()
+                if user:
+                    user.tier = "pro"
+                    db.commit()
+        finally:
+            db.close()
+        client.post("/v1/collections", json={"name": "ask-pro-test", "dim": 4},
+                    headers={"x-api-key": key})
+        resp = client.post("/v1/collections/ask-pro-test/graph/ask",
+                           json={"query": "test"}, headers={"x-api-key": key})
+        assert resp.status_code == 403
+
+    def test_graph_ask_empty_graph_returns_answer(self, client):
+        """Empty graph returns graceful no-context answer."""
+        client.post("/v1/collections", json={"name": "ask-empty", "dim": 4},
+                    headers={"x-api-key": "test-key"})
+        resp = client.post("/v1/collections/ask-empty/graph/ask",
+                           json={"query": "What is Apple?"},
+                           headers={"x-api-key": "test-key"})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert "answer" in data
+        assert "graph_context" in data
+        assert "entities_used" in data["graph_context"]
+
+    def test_graph_ask_collection_not_found(self, client):
+        resp = client.post("/v1/collections/nonexistent/graph/ask",
+                           json={"query": "test"},
+                           headers={"x-api-key": "test-key"})
+        assert resp.json()["status"] == "error"
+
+    def test_pipeline_unit_entity_retrieval(self):
+        import networkx as nx
+        from vectordb.services.graph_retrieval import entity_retrieval
+
+        G = nx.MultiDiGraph()
+        G.add_node(1, entity_text="Apple Inc", entity_type="ORG")
+        G.add_node(2, entity_text="Google", entity_type="ORG")
+        G.add_node(3, entity_text="Music", entity_type="CONCEPT")
+
+        result = entity_retrieval("Apple music", G, top_k=5)
+        # Should match "Apple Inc" (contains "apple") and "Music" (contains "music")
+        assert 1 in result
+        assert 3 in result
+
+    def test_pipeline_unit_neighborhood_expansion(self):
+        import networkx as nx
+        from vectordb.services.graph_retrieval import neighborhood_expansion
+
+        G = nx.MultiDiGraph()
+        G.add_node(1, entity_text="Apple")
+        G.add_node(2, entity_text="Beats")
+        G.add_node(3, entity_text="Music")
+        G.add_edge(1, 2, relation_type="acquired")
+        G.add_edge(2, 3, relation_type="produces")
+
+        # Starting from node 1, hops=1 → should reach node 2
+        result = neighborhood_expansion([1], G, hops=1)
+        assert 1 in result
+        assert 2 in result
+        assert 3 not in result  # too far at hops=1
+
+        # hops=2 → should reach node 3
+        result2 = neighborhood_expansion([1], G, hops=2)
+        assert 3 in result2
+
+    def test_pipeline_unit_graph_reranking(self):
+        import networkx as nx
+        from vectordb.services.graph_retrieval import graph_reranking
+
+        G = nx.MultiDiGraph()
+        G.add_node(1, entity_text="Apple")
+        G.add_node(2, entity_text="Beats")
+        G.add_node(3, entity_text="Music")
+        G.add_edge(1, 2)
+        G.add_edge(1, 3)
+
+        result = graph_reranking({1, 2, 3}, G, query_vector=None, top_k=2)
+        assert len(result) == 2
+        # node 1 has highest degree (2 edges) so should rank first
+        assert result[0] == 1

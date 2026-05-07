@@ -245,3 +245,15 @@ class GraphSummarizeResponse(BaseModel):
     communities: List[GraphCommunity]
     total_communities: int
     timing_ms: Optional[Dict[str, float]] = None
+
+
+class GraphAskRequest(BaseModel):
+    query: str
+    k: int = 5
+
+
+class GraphAskResponse(BaseModel):
+    answer: str
+    sources: List[Any]
+    graph_context: Dict[str, Any]
+    timing_ms: Optional[Dict[str, float]] = None

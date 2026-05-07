@@ -11,6 +11,8 @@ from vectordb.backends import get_backend
 from vectordb.backends.base import VectorBackend
 from vectordb.models.db import get_db
 from vectordb.models.schemas import (
+    GraphAskRequest,
+    GraphAskResponse,
     GraphCommunity,
     GraphEntityResult,
     GraphPathRequest,
@@ -23,7 +25,7 @@ from vectordb.models.schemas import (
     GraphSummarizeResponse,
 )
 from vectordb.services.graph_manager import graph_manager
-from vectordb.services.graph_retrieval import community_detection, path_analysis
+from vectordb.services.graph_retrieval import community_detection, path_analysis, graph_ask_pipeline
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -188,5 +190,41 @@ async def graph_summarize(
         communities=communities,
         total_communities=len(communities),
         timing_ms={"summarize_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/ask")
+async def graph_ask(
+    name: str,
+    req: GraphAskRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_scale),
+):
+    """Full GraphRAG pipeline: entity retrieval → neighborhood → paths → reranking → context → LLM answer."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        result = await graph_ask_pipeline(
+            query=req.query,
+            collection_id=col["id"],
+            graph=graph,
+            db=db,
+            k=req.k,
+        )
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    response = GraphAskResponse(
+        answer=result["answer"],
+        sources=result["sources"],
+        graph_context=result["graph_context"],
+        timing_ms={"ask_ms": elapsed_ms},
     )
     return success_response(response.model_dump())

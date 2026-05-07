@@ -3,10 +3,11 @@ Graph retrieval pipeline — modular functions for /graph/ask and graph endpoint
 
 Phase 2: path_analysis — shortest paths between entity pairs
 Phase 3: community_detection — Louvain community detection
-Phase 4: full pipeline (added later)
+Phase 4: full 6-step retrieval pipeline (entity_retrieval, neighborhood_expansion,
+         graph_reranking, context_assembly, graph_ask_pipeline)
 """
 import networkx as nx
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Set
 
 
 def find_entity_node(graph: nx.MultiDiGraph, entity_text: str) -> Optional[int]:
@@ -187,3 +188,222 @@ def community_detection(
             break
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: Full 6-step retrieval pipeline
+# ---------------------------------------------------------------------------
+
+def entity_retrieval(query: str, graph: nx.MultiDiGraph, top_k: int = 5) -> List[int]:
+    """Find node IDs whose entity_text contains any word from the query."""
+    query_words = [w.lower() for w in query.split() if len(w) > 2]
+    matched = []
+    for node_id, data in graph.nodes(data=True):
+        entity_text = data.get("entity_text", "").lower()
+        if any(word in entity_text for word in query_words):
+            matched.append(node_id)
+        if len(matched) >= top_k:
+            break
+    return matched
+
+
+def neighborhood_expansion(
+    entity_ids: List[int], graph: nx.MultiDiGraph, hops: int = 2
+) -> Set[int]:
+    """BFS from seed entities to collect neighboring nodes within `hops`."""
+    visited: Set[int] = set(entity_ids)
+    frontier: Set[int] = set(entity_ids)
+    for _ in range(hops):
+        next_frontier: Set[int] = set()
+        for node_id in frontier:
+            # outgoing neighbors
+            for neighbor in graph.successors(node_id):
+                if neighbor not in visited:
+                    next_frontier.add(neighbor)
+                    visited.add(neighbor)
+            # incoming neighbors
+            for neighbor in graph.predecessors(node_id):
+                if neighbor not in visited:
+                    next_frontier.add(neighbor)
+                    visited.add(neighbor)
+        frontier = next_frontier
+        if not frontier:
+            break
+    return visited
+
+
+def graph_reranking(
+    node_ids: Set[int],
+    graph: nx.MultiDiGraph,
+    query_vector: Optional[List[float]],
+    top_k: int = 10,
+) -> List[int]:
+    """
+    Score nodes by degree-based centrality proxy (or 0.5 fallback if no query_vector).
+    Full vector-based reranking (cosine similarity against chunk vectors loaded from
+    SQLite) would improve accuracy — add as a future enhancement.
+    Returns top_k node IDs sorted by score descending.
+    """
+    scores = []
+
+    for node_id in node_ids:
+        score = 0.5  # default when no query_vector
+
+        if query_vector is not None:
+            # Use graph degree as proxy for node centrality / relevance
+            degree = graph.degree(node_id)
+            # Normalize: more connected → higher base score (capped at 0.7)
+            score = 0.3 + min(0.4, degree * 0.05)
+
+        scores.append((node_id, score))
+
+    scores.sort(key=lambda x: -x[1])
+    return [nid for nid, _ in scores[:top_k]]
+
+
+async def context_assembly(
+    top_node_ids: List[int],
+    graph: nx.MultiDiGraph,
+    db,  # sync Session
+    char_budget: int = 3000,
+) -> str:
+    """
+    Assemble context string from chunk texts stored in graph node metadata.
+    Fetches chunk text from the Vector table via vector_external_id.
+    Falls back gracefully if chunk text is not available.
+    """
+    from vectordb.models.db import Vector
+
+    seen_chunks: set = set()
+    context_parts = []
+    total_chars = 0
+
+    for node_id in top_node_ids:
+        node_data = graph.nodes.get(node_id, {})
+        chunk_id = node_data.get("chunk_id")
+        vector_external_id = node_data.get("vector_external_id")
+
+        # Avoid duplicate chunks
+        dedup_key = vector_external_id or chunk_id
+        if dedup_key and dedup_key in seen_chunks:
+            continue
+        if dedup_key:
+            seen_chunks.add(dedup_key)
+
+        # Try to get chunk text from Vector table
+        chunk_text = None
+        if vector_external_id:
+            try:
+                vec_row = db.query(Vector).filter_by(
+                    external_id=vector_external_id
+                ).first()
+                if vec_row and vec_row.content:
+                    chunk_text = vec_row.content
+                elif vec_row and vec_row.meta and isinstance(vec_row.meta, dict):
+                    chunk_text = vec_row.meta.get("text")
+            except Exception:
+                pass
+
+        if chunk_text:
+            remaining = char_budget - total_chars
+            if remaining <= 0:
+                break
+            trimmed = chunk_text[:remaining]
+            context_parts.append(trimmed)
+            total_chars += len(trimmed)
+
+    return "\n\n".join(context_parts) if context_parts else ""
+
+
+async def graph_ask_pipeline(
+    query: str,
+    collection_id: int,
+    graph: nx.MultiDiGraph,
+    db,  # sync Session
+    k: int = 5,
+) -> Dict[str, Any]:
+    """
+    Full 6-step GraphRAG pipeline.
+
+    Steps:
+      1. entity_retrieval — NER: match query words against entity_text
+      2. neighborhood_expansion — BFS 2 hops from matched entities
+      3. path_analysis — relationship paths between top 2 entities (if 2+ found)
+      4. graph_reranking — score/sort neighborhood nodes by degree proxy
+      5. context_assembly — fetch chunk texts, deduplicate, trim to budget
+      6. llm_answer — call generate_answer(query, context)
+
+    Returns: {answer: str, sources: list, graph_context: dict}
+    """
+    from vectordb.services.embedding_service import embed_text_cached_async
+    from vectordb.services.llm_service import generate_answer
+
+    # Step 1: Entity retrieval
+    entity_ids = entity_retrieval(query, graph, top_k=5)
+
+    # Step 2: Neighborhood expansion
+    if entity_ids:
+        neighborhood = neighborhood_expansion(entity_ids, graph, hops=2)
+    else:
+        # fallback: use first 50 nodes when no entities matched
+        neighborhood = set(list(graph.nodes())[:50])
+
+    # Step 3: Path analysis (only if 2+ entities found)
+    path_context = ""
+    if len(entity_ids) >= 2:
+        entity_texts = [
+            graph.nodes.get(nid, {}).get("entity_text", "") for nid in entity_ids[:2]
+        ]
+        if entity_texts[0] and entity_texts[1]:
+            path_result = path_analysis(graph, entity_texts[0], entity_texts[1], max_hops=3)
+            if path_result["path_count"] > 0:
+                path_steps = path_result["paths"][0]
+                path_str = " → ".join(
+                    s.get("entity", s.get("relation", "")) for s in path_steps
+                )
+                path_context = f"Relationship path: {path_str}"
+
+    # Step 4: Graph reranking
+    try:
+        query_vector = await embed_text_cached_async(query)
+    except Exception:
+        query_vector = None
+    top_node_ids = graph_reranking(neighborhood, graph, query_vector, top_k=k * 2)
+
+    # Step 5: Context assembly
+    context = await context_assembly(top_node_ids, graph, db)
+    if path_context:
+        context = path_context + "\n\n" + context
+
+    # Step 6: LLM answer
+    entities_used = [
+        graph.nodes.get(nid, {}).get("entity_text", str(nid))
+        for nid in entity_ids
+    ]
+
+    if not context.strip():
+        return {
+            "answer": "No relevant graph context found for this query.",
+            "sources": [],
+            "graph_context": {
+                "entities_used": entities_used,
+                "paths_used": [path_context] if path_context else [],
+            },
+        }
+
+    try:
+        # generate_answer returns a str (not a tuple)
+        answer = await generate_answer(query, context)
+        sources: List[Any] = []
+    except Exception:
+        answer = context[:500]  # graceful fallback
+        sources = []
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "graph_context": {
+            "entities_used": entities_used,
+            "paths_used": [path_context] if path_context else [],
+        },
+    }
