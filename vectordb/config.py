@@ -72,11 +72,16 @@ class Settings(BaseSettings):
     pg_ef_search: int = 40            # higher = more accurate but slower
 
     # GraphRAG extraction
-    graph_extraction_model: str = "gpt-4o-mini"
+    graph_extraction_model: str = "gpt-4o-mini"   # any LiteLLM model string; env: GRAPH_EXTRACTION_MODEL
+    graph_encryption_key: str = ""                 # 32-byte hex; env: GRAPH_ENCRYPTION_KEY
     graph_extractor_version: str = "v1"
     graph_worker_interval_s: int = 2
     graph_worker_concurrency: int = 5
     graph_max_collections: int = 50
+
+    # Provider API keys (server-level fallbacks; per-collection keys override these)
+    gemini_api_key: str = ""       # env: GEMINI_API_KEY
+    anthropic_api_key: str = ""    # env: ANTHROPIC_API_KEY
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
