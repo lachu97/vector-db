@@ -253,3 +253,19 @@ class CachingBackend(VectorBackend):
 
     async def health_stats(self):
         return await self._inner.health_stats()
+
+    # ------------------------------------------------------------------
+    # Graph extraction — delegate to inner backend (no caching needed)
+    # ------------------------------------------------------------------
+
+    async def enqueue_extraction_jobs(self, collection_id: int, jobs: list) -> None:
+        return await self._inner.enqueue_extraction_jobs(collection_id, jobs)
+
+    async def get_pending_extraction_jobs(self, limit: int = 10) -> list:
+        return await self._inner.get_pending_extraction_jobs(limit)
+
+    async def update_extraction_job(self, job_id: int, status: str, error_message=None) -> None:
+        return await self._inner.update_extraction_job(job_id, status, error_message)
+
+    async def reset_processing_jobs(self) -> None:
+        return await self._inner.reset_processing_jobs()
