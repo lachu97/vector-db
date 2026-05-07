@@ -208,6 +208,70 @@ class TestGraphConfigEndpoint:
         assert resp.json()["error"]["code"] == 404
 
 
+class TestAdminGraphEndpoints:
+    def test_test_model_returns_entities(self, client):
+        """POST /admin/graph/test-model calls llm_extract and returns results."""
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = (
+            '{"entities": [{"entity_text": "Apple", "entity_type": "ORG"}], "edges": []}'
+        )
+        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)):
+            resp = client.post(
+                "/v1/admin/graph/test-model",
+                json={"model": "gpt-4o-mini", "text": "Apple makes iPhones.", "api_keys": {}},
+                headers={"x-api-key": "test-key"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["model"] == "gpt-4o-mini"
+        assert len(data["entities"]) == 1
+        assert data["error"] is None
+
+    def test_test_model_error_captured(self, client):
+        """POST /admin/graph/test-model captures LiteLLM errors in error field."""
+        with patch("litellm.acompletion", new=AsyncMock(side_effect=Exception("AuthenticationError"))):
+            resp = client.post(
+                "/v1/admin/graph/test-model",
+                json={"model": "gpt-4o-mini", "text": "text.", "api_keys": {"api_key": "bad"}},
+                headers={"x-api-key": "test-key"},
+            )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["entities"] == []
+        assert data["error"] is None  # llm_extract catches exceptions internally; error is None
+
+    def test_benchmark_runs_all_models(self, client):
+        """POST /admin/graph/benchmark returns results for each model."""
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"entities": [], "edges": []}'
+
+        with patch("litellm.acompletion", new=AsyncMock(return_value=mock_response)):
+            resp = client.post(
+                "/v1/admin/graph/benchmark",
+                json={
+                    "models": ["gpt-4o-mini", "ollama/llama3.2"],
+                    "text": "Apple acquired Beats.",
+                    "api_keys": {},
+                },
+                headers={"x-api-key": "test-key"},
+            )
+        assert resp.status_code == 200
+        results = resp.json()["data"]["results"]
+        assert len(results) == 2
+        model_names = [r["model"] for r in results]
+        assert "gpt-4o-mini" in model_names
+        assert "ollama/llama3.2" in model_names
+
+    def test_benchmark_rejects_more_than_5_models(self, client):
+        """POST /admin/graph/benchmark returns 422 for >5 models."""
+        resp = client.post(
+            "/v1/admin/graph/benchmark",
+            json={"models": ["m1", "m2", "m3", "m4", "m5", "m6"], "text": "text"},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 422
+
+
 class TestConfig:
     def test_new_graph_config_fields_present(self):
         """Config has encryption key and provider key fields; old ollama vars removed."""

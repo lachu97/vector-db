@@ -172,6 +172,7 @@ app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(observability.router)
 app.include_router(graph.router)
+app.include_router(graph.admin_router)
 
 # ------------------------------------------------------------------
 # Root

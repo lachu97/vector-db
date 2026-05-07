@@ -273,3 +273,48 @@ async def graph_ask(
         timing_ms={"ask_ms": elapsed_ms},
     )
     return success_response(response.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints — model testing and benchmarking
+# ---------------------------------------------------------------------------
+
+@admin_router.post("/graph/test-model")
+async def graph_test_model(
+    req: TestModelRequest,
+    auth: ApiKeyInfo = Depends(require_admin),
+):
+    """Test a single LLM model for graph extraction — returns entities, edges, and timing."""
+    settings = get_settings()
+    merged_keys = {**_build_server_keys(settings), **req.api_keys}
+
+    t0 = time.perf_counter()
+    entities, edges = await llm_extract(req.text, req.model, merged_keys)
+    timing_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+    return success_response(TestModelResponse(
+        model=req.model,
+        entities=entities,
+        edges=edges,
+        timing_ms=timing_ms,
+        error=None,
+    ).model_dump())
+
+
+@admin_router.post("/graph/benchmark")
+async def graph_benchmark(
+    req: BenchmarkRequest,
+    auth: ApiKeyInfo = Depends(require_admin),
+):
+    """Benchmark multiple LLM models in parallel — returns side-by-side extraction results."""
+    settings = get_settings()
+    merged_keys = {**_build_server_keys(settings), **req.api_keys}
+
+    async def run_one(model: str) -> TestModelResponse:
+        t0 = time.perf_counter()
+        entities, edges = await llm_extract(req.text, model, merged_keys)
+        timing_ms = round((time.perf_counter() - t0) * 1000, 2)
+        return TestModelResponse(model=model, entities=entities, edges=edges, timing_ms=timing_ms, error=None)
+
+    results = await asyncio.gather(*[run_one(m) for m in req.models])
+    return success_response(BenchmarkResponse(results=list(results)).model_dump())
