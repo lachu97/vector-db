@@ -201,6 +201,9 @@ async def start_extraction_worker(backend) -> None:
         from openai import AsyncOpenAI
         client = AsyncOpenAI(api_key=settings.openai_api_key)
 
+    # Give the backend thread time to finish startup before the first poll
+    await asyncio.sleep(1)
+
     # Crash recovery: reset any jobs stuck in 'processing' from a previous crash
     try:
         await backend.reset_processing_jobs()

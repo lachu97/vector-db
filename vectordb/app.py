@@ -18,7 +18,7 @@ from vectordb.middleware import RateLimitMiddleware
 from vectordb.services.vector_service import error_response
 from vectordb.routers import (
     auth, collections, vectors, search,
-    keys, observability, documents, query, usage
+    keys, observability, documents, query, usage, graph
 )
 from vectordb.tracing import setup_tracing
 
@@ -111,6 +111,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("embedding_init_failed", error=str(e))
 
+    # Start graph extraction worker
+    try:
+        from vectordb.services.graph_extraction import start_extraction_worker
+        asyncio.create_task(start_extraction_worker(app.state.backend))
+        logger.info("graph_extraction_worker_started")
+    except Exception as e:
+        logger.warning("graph_extraction_worker_failed", error=str(e))
+
     logger.info("app_startup_complete")
 
     yield
@@ -163,6 +171,7 @@ app.include_router(usage.router)
 app.include_router(documents.router)
 app.include_router(query.router)
 app.include_router(observability.router)
+app.include_router(graph.router)
 
 # ------------------------------------------------------------------
 # Root
