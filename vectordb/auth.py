@@ -184,3 +184,30 @@ require_admin = _require_role("admin")
 
 # Legacy alias for backward compatibility with any code still using verify_api_key
 verify_api_key = require_readonly
+
+
+async def require_pro_or_scale(
+    request: Request,
+    api_key: Optional[str] = Depends(api_key_header),
+    db: Session = Depends(get_db),
+) -> ApiKeyInfo:
+    """FastAPI dependency — gates access to Pro/Scale tier features (GraphRAG)."""
+    info = _lookup_key(api_key, db)
+    # Bootstrap admin key has no user → allow (it sees everything)
+    if info.user_id is not None:
+        user = db.query(User).filter_by(id=info.user_id).first()
+        if user and user.tier not in ("pro", "scale"):
+            raise HTTPException(
+                status_code=403,
+                detail="GraphRAG requires Pro or Scale tier. Upgrade at /pricing",
+            )
+    try:
+        _auth_post_check(db, info, request)
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    return info

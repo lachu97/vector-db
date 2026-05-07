@@ -57,8 +57,24 @@ async def upload_document(
         )
         if include_timing:
             result["timing_ms"] = timing
-        return success_response(result)
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
     except DimensionMismatchError as e:
         return error_response(400, str(e))
+
+    # Enqueue graph extraction jobs — failures must not block the upload response
+    try:
+        document_id = result.get("document_id", "unknown")
+        # Fallback: one job per document (process_document does not expose chunk-level info)
+        jobs = [{
+            "document_id": document_id,
+            "chunk_id": "0",
+            "chunk_text": file_text[:4000],  # trim to avoid huge payloads
+        }]
+        col_row = await backend.get_collection(collection_name, user_id=auth.user_id)
+        await backend.enqueue_extraction_jobs(col_row.id, jobs)
+        logger.info("graph_extraction_enqueued", document_id=document_id, chunks=len(jobs))
+    except Exception as e:
+        logger.warning("graph_extraction_enqueue_failed", error=str(e))
+
+    return success_response(result)
