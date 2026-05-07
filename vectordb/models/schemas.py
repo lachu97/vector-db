@@ -210,3 +210,23 @@ class GraphStatusResponse(BaseModel):
     jobs: Dict[str, int]        # {"pending": N, "processing": N, "completed": N, "failed": N}
     entity_count: int
     edge_count: int
+
+
+class GraphPathRequest(BaseModel):
+    source: str          # source entity text
+    target: str          # target entity text
+    max_hops: int = 4    # max path length in edges
+
+class GraphPathStep(BaseModel):
+    entity: Optional[str] = None
+    entity_type: Optional[str] = None
+    relation: Optional[str] = None
+    weight: Optional[float] = None
+
+class GraphPathResponse(BaseModel):
+    source: str
+    target: str
+    paths: List[List[GraphPathStep]]
+    path_count: int
+    shortest_hop_count: Optional[int] = None
+    timing_ms: Optional[Dict[str, float]] = None

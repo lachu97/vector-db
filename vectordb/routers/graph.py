@@ -12,11 +12,15 @@ from vectordb.backends.base import VectorBackend
 from vectordb.models.db import get_db
 from vectordb.models.schemas import (
     GraphEntityResult,
+    GraphPathRequest,
+    GraphPathResponse,
+    GraphPathStep,
     GraphRelation,
     GraphSearchRequest,
     GraphSearchResponse,
 )
 from vectordb.services.graph_manager import graph_manager
+from vectordb.services.graph_retrieval import path_analysis
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -113,5 +117,43 @@ async def graph_search(
     response = GraphSearchResponse(
         entities=results,
         timing_ms={"search_ms": search_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/path")
+async def graph_path(
+    name: str,
+    req: GraphPathRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Find shortest paths between two entities in the collection's knowledge graph."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        result = path_analysis(graph, req.source, req.target, max_hops=req.max_hops)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    # Convert raw step dicts to GraphPathStep objects
+    formatted_paths = [
+        [GraphPathStep(**step) for step in path]
+        for path in result["paths"]
+    ]
+
+    response = GraphPathResponse(
+        source=result["source"],
+        target=result["target"],
+        paths=formatted_paths,
+        path_count=result["path_count"],
+        shortest_hop_count=result.get("shortest_hop_count"),
+        timing_ms={"path_ms": elapsed_ms},
     )
     return success_response(response.model_dump())

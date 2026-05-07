@@ -404,3 +404,94 @@ class TestBootstrapKeyAccess:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["entities"] == []
+
+
+# ---------------------------------------------------------------------------
+# 7. Graph path endpoint tests
+# ---------------------------------------------------------------------------
+
+class TestGraphPath:
+    def test_graph_path_not_found_collection(self, client):
+        resp = client.post(
+            "/v1/collections/nonexistent/graph/path",
+            json={"source": "A", "target": "B"},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "error"
+        assert body["error"]["code"] == 404
+
+    def test_graph_path_empty_graph(self, client):
+        # Create collection, search with no entities → empty paths
+        client.post("/v1/collections", json={"name": "path-test", "dim": 4},
+                    headers={"x-api-key": "test-key"})
+        resp = client.post(
+            "/v1/collections/path-test/graph/path",
+            json={"source": "Apple", "target": "Microsoft"},
+            headers={"x-api-key": "test-key"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["path_count"] == 0
+        assert data["paths"] == []
+
+    def test_graph_path_requires_pro_or_scale(self, client):
+        # Need a free-tier user
+        import uuid
+        email = f"free-{uuid.uuid4()}@test.com"
+        reg = client.post("/v1/auth/register",
+                          json={"email": email, "password": "password123"})
+        free_key = reg.json()["data"]["api_key"]["key"]
+        resp = client.post(
+            "/v1/collections/any/graph/path",
+            json={"source": "A", "target": "B"},
+            headers={"x-api-key": free_key},
+        )
+        assert resp.status_code == 403
+
+    def test_graph_path_unit_simple(self):
+        """Unit test path_analysis directly with a built graph."""
+        import networkx as nx
+        from vectordb.services.graph_retrieval import path_analysis
+
+        G = nx.MultiDiGraph()
+        G.add_node(1, entity_text="Apple", entity_type="ORG")
+        G.add_node(2, entity_text="Beats", entity_type="ORG")
+        G.add_node(3, entity_text="Music", entity_type="CONCEPT")
+        G.add_edge(1, 2, relation_type="acquired", weight=1.0)
+        G.add_edge(2, 3, relation_type="produces", weight=1.0)
+
+        result = path_analysis(G, "Apple", "Music", max_hops=4)
+        assert result["path_count"] == 1
+        assert result["shortest_hop_count"] == 2
+        # Path: Apple → acquired → Beats → produces → Music
+        path = result["paths"][0]
+        assert path[0]["entity"] == "Apple"
+        assert path[1]["relation"] == "acquired"
+        assert path[2]["entity"] == "Beats"
+
+    def test_graph_path_unit_no_path(self):
+        """Returns empty when no path exists."""
+        import networkx as nx
+        from vectordb.services.graph_retrieval import path_analysis
+
+        G = nx.MultiDiGraph()
+        G.add_node(1, entity_text="Apple", entity_type="ORG")
+        G.add_node(2, entity_text="Google", entity_type="ORG")
+        # No edges → no path
+
+        result = path_analysis(G, "Apple", "Google", max_hops=4)
+        assert result["path_count"] == 0
+        assert result["paths"] == []
+
+    def test_graph_path_unit_missing_entity(self):
+        """Returns empty when source or target not in graph."""
+        import networkx as nx
+        from vectordb.services.graph_retrieval import path_analysis
+
+        G = nx.MultiDiGraph()
+        G.add_node(1, entity_text="Apple", entity_type="ORG")
+
+        result = path_analysis(G, "Apple", "NonExistent", max_hops=4)
+        assert result["path_count"] == 0
