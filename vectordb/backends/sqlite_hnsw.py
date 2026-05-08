@@ -199,7 +199,19 @@ class SQLiteHNSWBackend(VectorBackend):
         description: Optional[str] = None, user_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         async with self._session_factory() as session:
-            existing = await session.execute(select(_Collection).where(_Collection.name == name))
+            # Scope duplicate check to the same user.
+            # user_id=None (bootstrap) uses IS NULL to avoid SQLite NULL != NULL trap.
+            if user_id is not None:
+                stmt = select(_Collection).where(
+                    _Collection.name == name,
+                    _Collection.user_id == user_id,
+                )
+            else:
+                stmt = select(_Collection).where(
+                    _Collection.name == name,
+                    _Collection.user_id.is_(None),
+                )
+            existing = await session.execute(stmt)
             if existing.scalar_one_or_none():
                 raise CollectionAlreadyExistsError(name)
             col = _Collection(

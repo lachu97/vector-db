@@ -214,3 +214,42 @@ def test_delete_collection_not_found(client, headers):
     body = resp.json()
     assert body["status"] == "error"
     assert body["error"]["code"] == 404
+
+
+def test_two_users_can_create_same_collection_name(client):
+    """Different users can own collections with the same name."""
+    # Register two distinct users
+    r1 = client.post("/v1/auth/register", json={"email": "user_col_a@test.com", "password": "password123"})
+    r2 = client.post("/v1/auth/register", json={"email": "user_col_b@test.com", "password": "password123"})
+    key_a = r1.json()["data"]["api_key"]["key"]
+    key_b = r2.json()["data"]["api_key"]["key"]
+
+    # Both create a collection named "shared-name"
+    resp_a = client.post(
+        "/v1/collections",
+        json={"name": "shared-name", "dim": 4},
+        headers={"x-api-key": key_a},
+    )
+    assert resp_a.json()["status"] == "success", f"User A failed: {resp_a.json()}"
+
+    resp_b = client.post(
+        "/v1/collections",
+        json={"name": "shared-name", "dim": 4},
+        headers={"x-api-key": key_b},
+    )
+    assert resp_b.json()["status"] == "success", f"User B got conflict: {resp_b.json()}"
+
+    # User A does NOT see User B's collection
+    list_a = client.get("/v1/collections", headers={"x-api-key": key_a})
+    names_a = [c["name"] for c in list_a.json()["data"]["collections"]]
+    assert names_a.count("shared-name") == 1  # only their own
+
+
+def test_same_user_cannot_create_duplicate_collection_name(client):
+    """Same user cannot own two collections with the same name."""
+    r = client.post("/v1/auth/register", json={"email": "user_dup@test.com", "password": "password123"})
+    key = r.json()["data"]["api_key"]["key"]
+
+    client.post("/v1/collections", json={"name": "my-col", "dim": 4}, headers={"x-api-key": key})
+    resp = client.post("/v1/collections", json={"name": "my-col", "dim": 4}, headers={"x-api-key": key})
+    assert resp.json()["error"]["code"] == 409
