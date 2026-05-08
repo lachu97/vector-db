@@ -72,7 +72,7 @@ SessionLocal = get_session_local()
 class Collection(Base):
     __tablename__ = "collections"
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False, index=True)   # unique=True removed — now (user_id, name) is unique
     dim = Column(Integer, nullable=False)
     distance_metric = Column(String, nullable=False, default="cosine")
     description = Column(Text, nullable=True)
@@ -82,6 +82,10 @@ class Collection(Base):
     extraction_api_keys = Column(Text, nullable=True)
 
     vectors = relationship("Vector", back_populates="collection", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_user_collection"),
+    )
 
 
 class Vector(Base):
