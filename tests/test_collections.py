@@ -239,10 +239,14 @@ def test_two_users_can_create_same_collection_name(client):
     )
     assert resp_b.json()["status"] == "success", f"User B got conflict: {resp_b.json()}"
 
-    # User A does NOT see User B's collection
+    # Each user sees only their own collection
     list_a = client.get("/v1/collections", headers={"x-api-key": key_a})
     names_a = [c["name"] for c in list_a.json()["data"]["collections"]]
-    assert names_a.count("shared-name") == 1  # only their own
+    assert names_a.count("shared-name") == 1
+
+    list_b = client.get("/v1/collections", headers={"x-api-key": key_b})
+    names_b = [c["name"] for c in list_b.json()["data"]["collections"]]
+    assert names_b.count("shared-name") == 1
 
 
 def test_same_user_cannot_create_duplicate_collection_name(client):
