@@ -29,13 +29,16 @@ from vectordb.models.schemas import (
     GraphSearchResponse,
     GraphSummarizeRequest,
     GraphSummarizeResponse,
+    HybridAskRequest,
+    HybridAskResponse,
+    HybridSource,
     TestModelRequest,
     TestModelResponse,
 )
 from vectordb.services.graph_encryption import decrypt_api_keys, encrypt_api_keys
 from vectordb.services.graph_extraction import _build_server_keys, llm_extract
 from vectordb.services.graph_manager import graph_manager
-from vectordb.services.graph_retrieval import community_detection, path_analysis, graph_ask_pipeline
+from vectordb.services.graph_retrieval import community_detection, path_analysis, graph_ask_pipeline, graph_hybrid_ask_pipeline
 from vectordb.services.vector_service import error_response, success_response
 
 logger = structlog.get_logger(__name__)
@@ -271,6 +274,49 @@ async def graph_ask(
         sources=result["sources"],
         graph_context=result["graph_context"],
         timing_ms={"ask_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/hybrid_ask")
+async def graph_hybrid_ask(
+    name: str,
+    req: HybridAskRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Hybrid GraphRAG: parallel vector search + graph traversal → RRF fusion → LLM answer."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        result = await graph_hybrid_ask_pipeline(
+            query=req.query,
+            collection_name=name,
+            collection_id=col["id"],
+            graph=graph,
+            db=db,
+            backend=backend,
+            k=req.k,
+            vector_weight=req.vector_weight,
+            graph_hops=req.graph_hops,
+            include_graph_context=req.include_graph_context,
+            user_id=auth.user_id,
+        )
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    response = HybridAskResponse(
+        answer=result["answer"],
+        sources=[HybridSource(**s) for s in result["sources"]],
+        graph_context=result["graph_context"],
+        retrieval_stats=result["retrieval_stats"],
+        timing_ms={"hybrid_ask_ms": elapsed_ms},
     )
     return success_response(response.model_dump())
 
