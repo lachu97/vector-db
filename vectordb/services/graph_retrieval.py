@@ -6,6 +6,7 @@ Phase 3: community_detection — Louvain community detection
 Phase 4: full 6-step retrieval pipeline (entity_retrieval, neighborhood_expansion,
          graph_reranking, context_assembly, graph_ask_pipeline)
 """
+import asyncio
 import networkx as nx
 from typing import List, Dict, Optional, Any, Set
 
@@ -405,5 +406,141 @@ async def graph_ask_pipeline(
         "graph_context": {
             "entities_used": entities_used,
             "paths_used": [path_context] if path_context else [],
+        },
+    }
+
+
+async def graph_hybrid_ask_pipeline(
+    query: str,
+    collection_name: str,
+    collection_id: int,
+    graph: nx.MultiDiGraph,
+    db,
+    backend,
+    k: int = 5,
+    vector_weight: float = 0.5,
+    graph_hops: int = 2,
+    include_graph_context: bool = True,
+    user_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Hybrid GraphRAG: parallel vector search + graph traversal → RRF fusion → LLM answer."""
+    from vectordb.services.embedding_service import embed_text_cached_async
+    from vectordb.services.llm_service import generate_answer
+
+    # Step 1: embed query once (used by both vector search and graph reranking)
+    query_vector = await embed_text_cached_async(query)
+
+    # Step 2: parallel retrieval
+    async def _get_graph_nodes():
+        seed_ids = entity_retrieval(query, graph, top_k=k)
+        hood = neighborhood_expansion(seed_ids, graph, hops=graph_hops) if seed_ids else set()
+        return seed_ids, hood
+
+    vector_results, (seed_ids, neighborhood) = await asyncio.gather(
+        backend.search(collection_name, query_vector, k=k * 2, offset=0, filters=None, user_id=user_id),
+        _get_graph_nodes(),
+    )
+
+    # Step 3: build ranked lists
+    vec_rank = {r["external_id"]: i + 1 for i, r in enumerate(vector_results)}
+
+    top_graph_nodes = graph_reranking(neighborhood, graph, query_vector, top_k=k * 2)
+    graph_eids_ranked = []
+    for nid in top_graph_nodes:
+        veid = graph.nodes.get(nid, {}).get("vector_external_id")
+        if veid:
+            graph_eids_ranked.append(veid)
+    graph_rank = {eid: i + 1 for i, eid in enumerate(graph_eids_ranked)}
+
+    # Step 4: RRF fusion
+    RRF_K = 60
+    all_eids = set(vec_rank) | set(graph_rank)
+    fused = []
+    for eid in all_eids:
+        vr = vector_weight * (1.0 / (RRF_K + vec_rank[eid])) if eid in vec_rank else 0.0
+        gr = (1 - vector_weight) * (1.0 / (RRF_K + graph_rank[eid])) if eid in graph_rank else 0.0
+        in_v, in_g = eid in vec_rank, eid in graph_rank
+        stype = "both" if (in_v and in_g) else ("vector" if in_v else "graph")
+        fused.append({"external_id": eid, "score": vr + gr, "source_type": stype})
+    fused.sort(key=lambda x: -x["score"])
+    top_fused = fused[:k]
+
+    # Step 5: batch fetch content (single SQL IN query)
+    fused_eids = [f["external_id"] for f in top_fused]
+    content_rows = []
+    if fused_eids:
+        content_rows = await backend.batch_get_vectors(
+            collection_name, fused_eids, include_vectors=False, user_id=user_id
+        )
+    content_map = {r["external_id"]: r.get("content") or "" for r in content_rows}
+    metadata_map = {r["external_id"]: r.get("metadata") for r in content_rows}
+    for r in vector_results:
+        if r["external_id"] not in metadata_map:
+            metadata_map[r["external_id"]] = r.get("metadata")
+
+    # Step 6: graph context enrichment
+    entities_used = [
+        graph.nodes.get(nid, {}).get("entity_text", "")
+        for nid in seed_ids
+        if graph.nodes.get(nid)
+    ]
+    relations_used = []
+    if include_graph_context:
+        for nid in seed_ids:
+            for _src, tgt, _key, edata in graph.edges(nid, keys=True, data=True):
+                tgt_text = graph.nodes.get(tgt, {}).get("entity_text", str(tgt))
+                relations_used.append({
+                    "source": graph.nodes.get(nid, {}).get("entity_text", str(nid)),
+                    "relation": edata.get("relation_type", "related_to"),
+                    "target": tgt_text,
+                })
+
+    # Step 7: context assembly (4000 char budget)
+    CHAR_BUDGET = 4000
+    parts, total = [], 0
+    for item in top_fused:
+        text = content_map.get(item["external_id"], "")
+        if text and total < CHAR_BUDGET:
+            chunk = text[:CHAR_BUDGET - total]
+            parts.append(chunk)
+            total += len(chunk)
+    if include_graph_context and relations_used:
+        rel_lines = [
+            f'{r["source"]} --[{r["relation"]}]--> {r["target"]}'
+            for r in relations_used[:20]
+        ]
+        graph_section = "Knowledge Graph Relationships:\n" + "\n".join(rel_lines)
+        remaining = CHAR_BUDGET - total
+        if remaining > 0:
+            parts.append(graph_section[:remaining])
+    context = "\n\n".join(parts)
+
+    # Step 8: LLM answer with graph-aware context header
+    graph_header = "Use the document context and knowledge graph relationships below to answer.\n\n"
+    answer = await generate_answer(query, graph_header + context)
+
+    # Step 9: build sources
+    sources = [
+        {
+            "external_id": f["external_id"],
+            "score": round(f["score"], 6),
+            "content": content_map.get(f["external_id"]) or None,
+            "metadata": metadata_map.get(f["external_id"]),
+            "source_type": f["source_type"],
+        }
+        for f in top_fused
+    ]
+
+    return {
+        "answer": answer,
+        "sources": sources,
+        "graph_context": {
+            "entities_used": [e for e in entities_used if e],
+            "relations_used": relations_used,
+        },
+        "retrieval_stats": {
+            "vector_chunks": len(vec_rank),
+            "graph_chunks": len(graph_rank),
+            "fused_chunks": len(top_fused),
         },
     }
