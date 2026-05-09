@@ -259,6 +259,42 @@ class GraphAskResponse(BaseModel):
     timing_ms: Optional[Dict[str, float]] = None
 
 
+class HybridSource(BaseModel):
+    external_id: str
+    score: float
+    content: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    source_type: str  # "vector" | "graph" | "both"
+
+
+class HybridAskRequest(BaseModel):
+    query: str
+    k: int = 5
+    vector_weight: float = 0.5
+    graph_hops: int = 2
+    include_graph_context: bool = True
+
+    @model_validator(mode="after")
+    def _validate(self):
+        if not self.query.strip():
+            raise ValueError("query must be non-empty")
+        if not 1 <= self.k <= 20:
+            raise ValueError("k must be 1-20")
+        if not 0.0 <= self.vector_weight <= 1.0:
+            raise ValueError("vector_weight must be 0.0-1.0")
+        if not 1 <= self.graph_hops <= 4:
+            raise ValueError("graph_hops must be 1-4")
+        return self
+
+
+class HybridAskResponse(BaseModel):
+    answer: str
+    sources: List[HybridSource]
+    graph_context: Dict[str, Any]
+    retrieval_stats: Dict[str, int]
+    timing_ms: Optional[Dict[str, float]] = None
+
+
 # ------------------------------------------------------------------
 # Flexible LLM provider schemas
 # ------------------------------------------------------------------
