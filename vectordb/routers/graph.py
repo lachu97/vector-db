@@ -1,0 +1,366 @@
+"""Graph RAG endpoints — /v1/collections/{name}/graph/..."""
+import asyncio
+import time
+from typing import List, Optional
+
+import structlog
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+
+from vectordb.auth import ApiKeyInfo, require_admin, require_pro_or_scale, require_scale
+from vectordb.backends import get_backend
+from vectordb.backends.base import VectorBackend
+from vectordb.config import get_settings
+from vectordb.models.db import get_db
+from vectordb.models.schemas import (
+    BenchmarkRequest,
+    BenchmarkResponse,
+    GraphAskRequest,
+    GraphAskResponse,
+    GraphCommunity,
+    GraphConfigRequest,
+    GraphConfigResponse,
+    GraphEntityResult,
+    GraphPathRequest,
+    GraphPathResponse,
+    GraphPathStep,
+    GraphRelation,
+    GraphSearchRequest,
+    GraphSearchResponse,
+    GraphSummarizeRequest,
+    GraphSummarizeResponse,
+    HybridAskRequest,
+    HybridAskResponse,
+    HybridSource,
+    TestModelRequest,
+    TestModelResponse,
+)
+from vectordb.services.graph_encryption import decrypt_api_keys, encrypt_api_keys
+from vectordb.services.graph_extraction import _build_server_keys, llm_extract
+from vectordb.services.graph_manager import graph_manager
+from vectordb.services.graph_retrieval import community_detection, path_analysis, graph_ask_pipeline, graph_hybrid_ask_pipeline
+from vectordb.services.vector_service import error_response, success_response
+
+logger = structlog.get_logger(__name__)
+router = APIRouter(prefix="/v1/collections", tags=["graph"])
+admin_router = APIRouter(prefix="/v1/admin", tags=["graph-admin"])
+
+
+@router.get("/{name}/graph/status")
+async def graph_status(
+    name: str,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Return job queue stats plus entity/edge counts for the collection's graph."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db: Session = next(get_db())
+    try:
+        stats = await graph_manager.get_job_stats(col["id"], db)
+        entity_count, edge_count = await graph_manager.get_counts(col["id"], db)
+    finally:
+        db.close()
+
+    return success_response({
+        "jobs": stats,
+        "entity_count": entity_count,
+        "edge_count": edge_count,
+    })
+
+
+@router.patch("/{name}/graph/config")
+async def graph_config_update(
+    name: str,
+    req: GraphConfigRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Set per-collection LLM model and encrypted API keys for graph extraction."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    settings = get_settings()
+
+    from vectordb.models.db import Collection
+    db: Session = next(get_db())
+    try:
+        collection = db.query(Collection).filter(Collection.id == col["id"]).first()
+        if req.model is not None:
+            collection.extraction_model = req.model
+        if req.api_keys is not None:
+            collection.extraction_api_keys = encrypt_api_keys(req.api_keys, settings.graph_encryption_key)
+        db.commit()
+        api_keys_set = collection.extraction_api_keys is not None
+        model = collection.extraction_model
+    finally:
+        db.close()
+
+    return success_response(GraphConfigResponse(
+        model=model,
+        api_keys_set=api_keys_set,
+    ).model_dump())
+
+
+@router.post("/{name}/graph/search")
+async def graph_search(
+    name: str,
+    req: GraphSearchRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Fuzzy text search over graph entities, returning matched nodes with relations."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db: Session = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        search_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    # Tokenise query for fuzzy matching
+    query_words = [w for w in req.query.lower().split() if w]
+
+    results: List[GraphEntityResult] = []
+    for node_id, node_data in graph.nodes(data=True):
+        entity_text: str = node_data.get("entity_text", "")
+        entity_text_lower = entity_text.lower()
+
+        # Skip if no query word matches
+        if not any(word in entity_text_lower for word in query_words):
+            continue
+
+        # Optional entity_type filter
+        entity_type: Optional[str] = node_data.get("entity_type")
+        if req.entity_types and entity_type not in req.entity_types:
+            continue
+
+        # Build relations from outgoing edges
+        relations: List[GraphRelation] = []
+        for _src, tgt, _key, edge_data in graph.edges(node_id, keys=True, data=True):
+            tgt_data = graph.nodes.get(tgt, {})
+            relations.append(GraphRelation(
+                relation_type=edge_data.get("relation_type", "related_to"),
+                target_entity=tgt_data.get("entity_text", str(tgt)),
+                target_type=tgt_data.get("entity_type"),
+                weight=float(edge_data.get("weight", 1.0)),
+            ))
+
+        # chunk_ids: node stores a single chunk_id; collect it
+        chunk_id = node_data.get("chunk_id")
+        chunk_ids = [chunk_id] if chunk_id else []
+
+        results.append(GraphEntityResult(
+            entity_text=entity_text,
+            entity_type=entity_type,
+            relations=relations,
+            chunk_ids=chunk_ids,
+        ))
+
+        if len(results) >= req.k:
+            break
+
+    response = GraphSearchResponse(
+        entities=results,
+        timing_ms={"search_ms": search_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/path")
+async def graph_path(
+    name: str,
+    req: GraphPathRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Find shortest paths between two entities in the collection's knowledge graph."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        result = path_analysis(graph, req.source, req.target, max_hops=req.max_hops)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    # Convert raw step dicts to GraphPathStep objects
+    formatted_paths = [
+        [GraphPathStep(**step) for step in path]
+        for path in result["paths"]
+    ]
+
+    response = GraphPathResponse(
+        source=result["source"],
+        target=result["target"],
+        paths=formatted_paths,
+        path_count=result["path_count"],
+        shortest_hop_count=result.get("shortest_hop_count"),
+        timing_ms={"path_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/summarize")
+async def graph_summarize(
+    name: str,
+    req: GraphSummarizeRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_scale),   # Scale only
+):
+    """Detect communities in the collection's knowledge graph using Louvain algorithm."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        communities_raw = community_detection(graph, max_communities=req.max_communities)
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    communities = [GraphCommunity(**c) for c in communities_raw]
+    response = GraphSummarizeResponse(
+        communities=communities,
+        total_communities=len(communities),
+        timing_ms={"summarize_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/ask")
+async def graph_ask(
+    name: str,
+    req: GraphAskRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_scale),
+):
+    """Full GraphRAG pipeline: entity retrieval → neighborhood → paths → reranking → context → LLM answer."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        result = await graph_ask_pipeline(
+            query=req.query,
+            collection_id=col["id"],
+            graph=graph,
+            db=db,
+            k=req.k,
+        )
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    response = GraphAskResponse(
+        answer=result["answer"],
+        sources=result["sources"],
+        graph_context=result["graph_context"],
+        timing_ms={"ask_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+@router.post("/{name}/graph/hybrid_ask")
+async def graph_hybrid_ask(
+    name: str,
+    req: HybridAskRequest,
+    backend: VectorBackend = Depends(get_backend),
+    auth: ApiKeyInfo = Depends(require_pro_or_scale),
+):
+    """Hybrid GraphRAG: parallel vector search + graph traversal → RRF fusion → LLM answer."""
+    col = await backend.get_collection(name, user_id=auth.user_id)
+    if not col:
+        return error_response(404, f"Collection '{name}' not found")
+
+    db = next(get_db())
+    try:
+        t0 = time.perf_counter()
+        graph = await graph_manager.get_graph(col["id"], db)
+        result = await graph_hybrid_ask_pipeline(
+            query=req.query,
+            collection_name=name,
+            collection_id=col["id"],
+            graph=graph,
+            db=db,
+            backend=backend,
+            k=req.k,
+            vector_weight=req.vector_weight,
+            graph_hops=req.graph_hops,
+            include_graph_context=req.include_graph_context,
+            user_id=auth.user_id,
+        )
+        elapsed_ms = round((time.perf_counter() - t0) * 1000, 2)
+    finally:
+        db.close()
+
+    response = HybridAskResponse(
+        answer=result["answer"],
+        sources=[HybridSource(**s) for s in result["sources"]],
+        graph_context=result["graph_context"],
+        retrieval_stats=result["retrieval_stats"],
+        timing_ms={"hybrid_ask_ms": elapsed_ms},
+    )
+    return success_response(response.model_dump())
+
+
+# ---------------------------------------------------------------------------
+# Admin endpoints — model testing and benchmarking
+# ---------------------------------------------------------------------------
+
+@admin_router.post("/graph/test-model")
+async def graph_test_model(
+    req: TestModelRequest,
+    auth: ApiKeyInfo = Depends(require_admin),
+):
+    """Test a single LLM model for graph extraction — returns entities, edges, and timing."""
+    settings = get_settings()
+    merged_keys = {**_build_server_keys(settings), **req.api_keys}
+
+    t0 = time.perf_counter()
+    entities, edges = await llm_extract(req.text, req.model, merged_keys)
+    timing_ms = round((time.perf_counter() - t0) * 1000, 2)
+
+    return success_response(TestModelResponse(
+        model=req.model,
+        entities=entities,
+        edges=edges,
+        timing_ms=timing_ms,
+        error=None,
+    ).model_dump())
+
+
+@admin_router.post("/graph/benchmark")
+async def graph_benchmark(
+    req: BenchmarkRequest,
+    auth: ApiKeyInfo = Depends(require_admin),
+):
+    """Benchmark multiple LLM models in parallel — returns side-by-side extraction results."""
+    settings = get_settings()
+    merged_keys = {**_build_server_keys(settings), **req.api_keys}
+
+    async def run_one(model: str) -> TestModelResponse:
+        t0 = time.perf_counter()
+        entities, edges = await llm_extract(req.text, model, merged_keys)
+        timing_ms = round((time.perf_counter() - t0) * 1000, 2)
+        return TestModelResponse(model=model, entities=entities, edges=edges, timing_ms=timing_ms, error=None)
+
+    results = await asyncio.gather(*[run_one(m) for m in req.models])
+    return success_response(BenchmarkResponse(results=list(results)).model_dump())

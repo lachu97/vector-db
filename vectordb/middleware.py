@@ -1,6 +1,6 @@
 # vectordb/middleware.py
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
@@ -23,7 +23,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     def __init__(self, app, requests_per_minute: int = 100):
         super().__init__(app)
         self.requests_per_minute = requests_per_minute
-        self._windows: dict = defaultdict(list)
+        self._windows: dict = defaultdict(deque)
 
     async def dispatch(self, request: Request, call_next):
         api_key = request.headers.get("x-api-key")
@@ -35,7 +35,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Drop timestamps outside the sliding window
             cutoff = now - window
             while timestamps and timestamps[0] < cutoff:
-                timestamps.pop(0)
+                timestamps.popleft()
 
             if len(timestamps) >= self.requests_per_minute:
                 return JSONResponse(

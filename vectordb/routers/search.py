@@ -22,18 +22,20 @@ router = APIRouter(prefix="/v1", tags=["search"])
 DEFAULT_COLLECTION = "default"
 
 
-async def _ensure_default(backend: VectorBackend):
+async def _ensure_default(backend: VectorBackend, user_id=None):
     from vectordb.backends.base import CollectionAlreadyExistsError
     from vectordb.config import get_settings
     if hasattr(backend, "ensure_default_collection"):
-        return await backend.ensure_default_collection()
-    col = await backend.get_collection(DEFAULT_COLLECTION)
+        return await backend.ensure_default_collection(user_id=user_id)
+    col = await backend.get_collection(DEFAULT_COLLECTION, user_id=user_id)
     if col:
         return col
     try:
-        return await backend.create_collection(DEFAULT_COLLECTION, get_settings().vector_dim, "cosine")
+        return await backend.create_collection(
+            DEFAULT_COLLECTION, get_settings().vector_dim, "cosine", user_id=user_id
+        )
     except CollectionAlreadyExistsError:
-        return await backend.get_collection(DEFAULT_COLLECTION)
+        return await backend.get_collection(DEFAULT_COLLECTION, user_id=user_id)
 
 
 # ------------------------------------------------------------------
@@ -70,8 +72,8 @@ async def search_in_collection(
 
     try:
         t_search = time.perf_counter()
-        results = await backend.search(collection_name, vector, req.k, req.offset, req.filters)
-        total_count = await backend.count_vectors(collection_name, req.filters)
+        results = await backend.search(collection_name, vector, req.k, req.offset, req.filters, user_id=auth.user_id)
+        total_count = await backend.count_vectors(collection_name, req.filters, user_id=auth.user_id)
         search_ms = round((time.perf_counter() - t_search) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
@@ -101,7 +103,7 @@ async def recommend_in_collection(
     if access_err:
         return access_err
     try:
-        results = await backend.recommend(collection_name, external_id, k, ef)
+        results = await backend.recommend(collection_name, external_id, k, ef, user_id=auth.user_id)
         return success_response({"results": results})
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
@@ -121,7 +123,7 @@ async def similarity_in_collection(
     if access_err:
         return access_err
     try:
-        score = await backend.similarity(collection_name, id1, id2)
+        score = await backend.similarity(collection_name, id1, id2, user_id=auth.user_id)
         return success_response({"score": score})
     except CollectionNotFoundError:
         return error_response(404, f"Collection '{collection_name}' not found")
@@ -151,7 +153,7 @@ async def rerank_in_collection(
 
     try:
         t_search = time.perf_counter()
-        results = await backend.rerank(collection_name, vector, req.candidates)
+        results = await backend.rerank(collection_name, vector, req.candidates, user_id=auth.user_id)
         search_ms = round((time.perf_counter() - t_search) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
@@ -193,7 +195,7 @@ async def hybrid_search_in_collection(
     try:
         t_search = time.perf_counter()
         results = await backend.hybrid_search(
-            collection_name, req.query_text, vector, req.k, req.offset, req.alpha, req.filters
+            collection_name, req.query_text, vector, req.k, req.offset, req.alpha, req.filters, user_id=auth.user_id
         )
         search_ms = round((time.perf_counter() - t_search) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
@@ -251,7 +253,7 @@ async def search_legacy(
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
     t_start = time.perf_counter()
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
 
     vector = req.vector
     embedding_ms = 0.0
@@ -262,8 +264,10 @@ async def search_legacy(
 
     try:
         t_search = time.perf_counter()
-        results = await backend.search(DEFAULT_COLLECTION, vector, req.k, req.offset, req.filters)
-        total_count = await backend.count_vectors(DEFAULT_COLLECTION, req.filters)
+        results = await backend.search(
+            DEFAULT_COLLECTION, vector, req.k, req.offset, req.filters, user_id=auth.user_id
+        )
+        total_count = await backend.count_vectors(DEFAULT_COLLECTION, req.filters, user_id=auth.user_id)
         search_ms = round((time.perf_counter() - t_search) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
@@ -286,9 +290,9 @@ async def recommend_legacy(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
     try:
-        results = await backend.recommend(DEFAULT_COLLECTION, external_id, k, ef)
+        results = await backend.recommend(DEFAULT_COLLECTION, external_id, k, ef, user_id=auth.user_id)
         return success_response({"results": results})
     except VectorNotFoundError as e:
         return error_response(404, str(e))
@@ -303,9 +307,9 @@ async def similarity_legacy(
     backend: VectorBackend = Depends(get_backend),
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
     try:
-        score = await backend.similarity(DEFAULT_COLLECTION, id1, id2)
+        score = await backend.similarity(DEFAULT_COLLECTION, id1, id2, user_id=auth.user_id)
         return success_response({"score": score})
     except VectorNotFoundError:
         return error_response(404, "One or both IDs not found")
@@ -318,7 +322,7 @@ async def rerank_legacy(
     auth: ApiKeyInfo = Depends(require_readonly),
 ):
     t_start = time.perf_counter()
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
 
     vector = req.vector
     embedding_ms = 0.0
@@ -329,7 +333,7 @@ async def rerank_legacy(
 
     try:
         t_search = time.perf_counter()
-        results = await backend.rerank(DEFAULT_COLLECTION, vector, req.candidates)
+        results = await backend.rerank(DEFAULT_COLLECTION, vector, req.candidates, user_id=auth.user_id)
         search_ms = round((time.perf_counter() - t_search) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)
 
@@ -353,7 +357,7 @@ async def hybrid_search_legacy(
     t_start = time.perf_counter()
     if not (0.0 <= req.alpha <= 1.0):
         return error_response(400, "alpha must be between 0.0 and 1.0")
-    await _ensure_default(backend)
+    await _ensure_default(backend, user_id=auth.user_id)
 
     vector = req.vector
     embedding_ms = 0.0
@@ -365,7 +369,7 @@ async def hybrid_search_legacy(
     try:
         t_search = time.perf_counter()
         results = await backend.hybrid_search(
-            DEFAULT_COLLECTION, req.query_text, vector, req.k, req.offset, req.alpha, req.filters
+            DEFAULT_COLLECTION, req.query_text, vector, req.k, req.offset, req.alpha, req.filters, user_id=auth.user_id
         )
         search_ms = round((time.perf_counter() - t_search) * 1000, 2)
         total_ms = round((time.perf_counter() - t_start) * 1000, 2)

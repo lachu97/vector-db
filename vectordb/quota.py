@@ -90,6 +90,8 @@ BILLABLE_ENDPOINTS = {
     "/v1/hybrid_search",
     "/v1/rerank",
     "/v1/similarity",
+    # GraphRAG
+    "/v1/collections/{name}/graph/hybrid_ask",
 }
 
 WRITE_ENDPOINTS = {

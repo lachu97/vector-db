@@ -2,7 +2,7 @@
 """Document processing: chunk text, embed, store in vector DB."""
 import time
 import uuid
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 
 import structlog
 
@@ -19,6 +19,7 @@ async def process_document(
     backend: VectorBackend,
     chunk_size: int = 500,
     overlap: int = 50,
+    user_id: Optional[int] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, float]]:
     """Chunk text, generate embeddings, and bulk-upsert into existing collection.
 
@@ -54,7 +55,7 @@ async def process_document(
 
     # 4. Use existing bulk_upsert
     t_storage_start = time.perf_counter()
-    await backend.bulk_upsert(collection_name, items)
+    await backend.bulk_upsert(collection_name, items, user_id=user_id)
     t_storage = time.perf_counter()
 
     timing = {

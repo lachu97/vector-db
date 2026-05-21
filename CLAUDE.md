@@ -103,6 +103,15 @@ All endpoints (except `/`) require `x-api-key` header.
 | DELETE | `/v1/collections/{name}/delete/{id}` | Delete single vector |
 | POST | `/v1/collections/{name}/delete_batch` | Batch delete vectors |
 
+### GraphRAG Endpoints (Pro/Scale tier required)
+| Method | Endpoint | Tier | Purpose |
+|--------|----------|------|---------|
+| GET | `/v1/collections/{name}/graph/status` | Pro/Scale | Job queue counts + entity/edge cardinality |
+| POST | `/v1/collections/{name}/graph/search` | Pro/Scale | Fuzzy entity search over knowledge graph |
+| POST | `/v1/collections/{name}/graph/path` | Pro/Scale | Shortest paths between entity pairs |
+| POST | `/v1/collections/{name}/graph/summarize` | Scale only | Louvain community detection + cluster summaries |
+| POST | `/v1/collections/{name}/graph/ask` | Scale only | Full GraphRAG pipeline: entities → context → LLM answer |
+
 ### Legacy Endpoints (route to "default" collection)
 | Method | Endpoint |
 |--------|----------|
@@ -212,6 +221,15 @@ alembic downgrade -1
 | DB_URL | sqlite:///./vectors.db | Database connection string |
 | PORT | 8000 | Server port |
 | WORKERS | 4 | Gunicorn worker count |
+| GRAPH_EXTRACTION_MODEL | gpt-4o-mini | LiteLLM model string (any provider: `gpt-4o-mini`, `gemini/gemini-1.5-flash`, `ollama/llama3.2`, etc.) |
+| GRAPH_ENCRYPTION_KEY | (empty) | 32-byte hex key for encrypting per-collection API keys. Generate: `python -c "import secrets; print(secrets.token_hex(32))"` |
+| OPENAI_API_KEY | (empty) | Server-level OpenAI key (fallback for all collections) |
+| GEMINI_API_KEY | (empty) | Server-level Gemini key |
+| ANTHROPIC_API_KEY | (empty) | Server-level Anthropic key |
+| GRAPH_EXTRACTOR_VERSION | v1 | Bump to trigger graph re-extraction for all chunks |
+| GRAPH_WORKER_INTERVAL_S | 2 | Extraction worker poll interval (seconds) |
+| GRAPH_WORKER_CONCURRENCY | 5 | Max parallel LLM extraction calls |
+| GRAPH_MAX_COLLECTIONS | 50 | Max graphs held in memory simultaneously |
 
 ---
 
@@ -246,6 +264,19 @@ alembic downgrade -1
 - [x] CLI tool (`sdk/python/vectordb_client/cli/`) — `vdb` command, 46 tests
 - [x] Admin dashboard UI (React/Next.js) — `vector-db-web`
 - [x] Documentation site (`docs/`) — Mintlify, 30 pages, full API reference + OpenAPI spec
+
+### Phase 7.5: GraphRAG (Pro/Scale Feature) — Phases 1-4 Complete
+- [x] SQLAlchemy ORM models: GraphEntity, GraphEdge, GraphExtractionJob
+- [x] Alembic migration for 3 graph tables with composite indexes
+- [x] GraphManager service — lazy-load per-collection networkx.MultiDiGraph, double-checked lock, zero startup cost
+- [x] Extraction worker — SQLite-backed job queue, async polling, LLM entity/relationship extraction, retry logic, crash recovery
+- [x] `GET /v1/collections/{name}/graph/status` — job queue counts + entity/edge cardinality (Pro/Scale)
+- [x] `POST /v1/collections/{name}/graph/search` — entity-centric search over MultiDiGraph (Pro/Scale)
+- [x] Tier gate: `require_pro_or_scale` dependency — 403 for free/starter, bootstrap key always allowed
+- [x] Document upload → enqueue extraction jobs (non-blocking)
+- [x] Phase 2: `POST /v1/collections/{name}/graph/path` — shortest path between entity pairs, multi-hop traversal, directed+undirected fallback (Pro/Scale)
+- [x] Phase 3: `POST /v1/collections/{name}/graph/summarize` — Louvain community detection, central entity per cluster (Scale only)
+- [x] Phase 4: `POST /v1/collections/{name}/graph/ask` — full 6-step pipeline: entity retrieval → neighborhood expansion → path analysis → graph reranking → context assembly → LLM answer (Scale only)
 
 ### Phase 7: Cloud & Managed Service
 - [ ] Managed hosting (free/pro/scale tiers)
@@ -286,3 +317,14 @@ alembic downgrade -1
 - **Option C:** Auto-generate an admin API key for each new user on registration and return it in the response.
 
 **Impact:** Until this is solved, the frontend cannot properly isolate users. All users effectively share the same backend scope.
+
+## GraphRAG — Future Migration Note (Option C: Neo4j)
+
+When per-collection graph size exceeds available RAM (>1M entities or >10M edges), migrate `GraphManager` from networkx to Neo4j:
+- Replace `nx.MultiDiGraph` with `neo4j` Python async driver
+- Keep same `GraphManager` interface — routers and retrieval pipeline unchanged
+- Cypher replaces networkx BFS/shortest_path calls
+- Deploy Neo4j as separate service in `docker-compose.yml`
+- Trigger: single collection graph exceeds ~750MB RAM OR networkx BFS latency >100ms p95
+- Intermediate option: `igraph` (C backend, 10x memory efficient) or `rustworkx` (Rust, 5x faster BFS)
+- Current architecture handles corpora up to ~50k documents per collection comfortably

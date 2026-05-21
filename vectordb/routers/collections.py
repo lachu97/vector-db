@@ -91,7 +91,7 @@ async def export_collection(
         return error_response(404, f"Collection '{name}' not found")
     if limit < 1 or limit > 100000:
         return error_response(400, "limit must be between 1 and 100000")
-    vectors = await backend.export_vectors(name, limit)
+    vectors = await backend.export_vectors(name, limit, user_id=auth.user_id)
     return success_response({
         "collection": name,
         "dim": col["dim"],

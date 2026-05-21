@@ -7,6 +7,10 @@ import asyncio
 import hashlib
 import re
 from abc import ABC, abstractmethod
+
+# Pre-compiled for normalize_query — re.compile() is not free at call-time
+_RE_PUNCT = re.compile(r'[^\w\s]')
+_RE_SPACE = re.compile(r'\s+')
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from typing import List, Optional
@@ -27,8 +31,8 @@ def normalize_query(text: str) -> str:
     'what is ai'
     """
     text = text.strip().lower()
-    text = re.sub(r'[^\w\s]', '', text)
-    text = re.sub(r'\s+', ' ', text)
+    text = _RE_PUNCT.sub('', text)
+    text = _RE_SPACE.sub(' ', text)
     return text
 
 
@@ -136,7 +140,14 @@ def initialize_provider() -> None:
     if settings.redis_url:
         try:
             import redis
-            _redis_client = redis.from_url(settings.redis_url, decode_responses=False)
+            _redis_client = redis.from_url(
+                settings.redis_url,
+                decode_responses=False,
+                max_connections=50,
+                socket_keepalive=True,
+                socket_connect_timeout=1,
+                socket_timeout=1,
+            )
             _redis_client.ping()
             logger.info("embedding_redis_cache_enabled")
         except Exception as e:
@@ -201,9 +212,6 @@ def _make_lru_cache(maxsize: int):
     _lru_embed_fn = _cached
     return _cached
 
-
-# Initialize with default size (overridden in initialize_provider)
-_make_lru_cache(1000)
 
 
 # ---------------------------------------------------------------------------

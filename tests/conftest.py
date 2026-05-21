@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 # Override settings BEFORE any vectordb imports
 _tmpdir = tempfile.mkdtemp()
-os.environ["DB_URL"] = f"sqlite:///{_tmpdir}/test_vectors.db"
+os.environ["DATABASE_URL"] = f"sqlite:///{_tmpdir}/test_vectors.db"
 os.environ["INDEX_PATH"] = os.path.join(_tmpdir, "test_index.bin")
 os.environ["API_KEY"] = "test-key"
 os.environ["VECTOR_DIM"] = "384"
