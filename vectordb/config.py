@@ -83,6 +83,9 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""       # env: GEMINI_API_KEY
     anthropic_api_key: str = ""    # env: ANTHROPIC_API_KEY
 
+    # Startup seed
+    seed_admin_password: str = "Lakshu@123"   # env: SEED_ADMIN_PASSWORD
+
     model_config = {"env_file": ".env", "extra": "ignore"}
 
 

@@ -95,6 +95,13 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("init_db_failed", error=str(e))
 
+    # Seed admin users (idempotent — safe on every startup)
+    try:
+        from vectordb.services.seed_service import seed_admin_users
+        seed_admin_users()
+    except Exception as e:
+        logger.warning("seed_admin_users_failed", error=str(e))
+
     # observability
     try:
         observability.reset_start_time()
