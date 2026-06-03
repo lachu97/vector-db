@@ -28,5 +28,5 @@ CMD ["sh", "-c", "gunicorn main:app \
     --log-level info \
     --timeout 120"]
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:${PORT}/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD curl -f -H "x-api-key: ${API_KEY:-test-key}" http://localhost:${PORT}/v1/health || exit 1

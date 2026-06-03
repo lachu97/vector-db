@@ -2,28 +2,34 @@ version: "3.9"
 
 services:
   vectordb:
-    build: .
+    image: ghcr.io/lachu97/vector-db:latest
+    # Uncomment to build locally instead:
+    # build: .
     container_name: vectordb_app
     ports:
-      - "8000:8000"
+      - "${PORT:-8000}:${PORT:-8000}"
     environment:
       API_KEY: ${API_KEY:-test-key}
       WORKERS: ${WORKERS:-4}
       PORT: ${PORT:-8000}
-      DB_URL: ${DB_URL:-sqlite:///./vectors.db}
-      VECTOR_DIM: ${VECTOR_DIM:-384}
-      INDEX_PATH: ${INDEX_PATH:-data/index.bin}
-      MAX_ELEMENTS: ${MAX_ELEMENTS:-10000}
-      BYPASS_EMAILS: ${BYPASS_EMAILS:-}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:///./data/vectors.db}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-sqlite}
+      REDIS_URL: ${REDIS_URL:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-all-MiniLM-L6-v2}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${OTEL_ENDPOINT:-}
     volumes:
       - ./data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD", "curl", "-f", "-H", "x-api-key: ${API_KEY:-test-key}", "http://localhost:${PORT:-8000}/v1/health" ]
+      test: ["CMD", "curl", "-f", "-H", "x-api-key: ${API_KEY:-test-key}", "http://localhost:${PORT:-8000}/v1/health"]
       interval: 30s
       timeout: 10s
+      start_period: 15s
       retries: 3
-
     logging:
       driver: "json-file"
       options:
