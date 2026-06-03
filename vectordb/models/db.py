@@ -31,14 +31,17 @@ def get_engine():
     global _ENGINE
     if _ENGINE is None:
         settings = get_settings()
+        is_sqlite = settings.db_url.startswith("sqlite")
 
+        connect_args = {"check_same_thread": False} if is_sqlite else {}
         _ENGINE = create_engine(
             settings.db_url,
-            connect_args={"check_same_thread": False},
+            connect_args=connect_args,
             pool_pre_ping=True,
         )
 
-        _set_sqlite_pragma(_ENGINE)
+        if is_sqlite:
+            _set_sqlite_pragma(_ENGINE)
 
     return _ENGINE
 
