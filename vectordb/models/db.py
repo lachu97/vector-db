@@ -31,14 +31,18 @@ def get_engine():
     global _ENGINE
     if _ENGINE is None:
         settings = get_settings()
-        is_sqlite = settings.db_url.startswith("sqlite")
+        url = settings.db_url
+        is_sqlite = url.startswith("sqlite")
+
+        # asyncpg is async-only; sync engine needs psycopg2
+        if "+asyncpg" in url:
+            url = url.replace("+asyncpg", "+psycopg2")
+        # strip ssl param — psycopg2 handles ssl differently
+        if "?ssl=" in url:
+            url = url.split("?ssl=")[0] + "?sslmode=" + url.split("?ssl=")[1]
 
         connect_args = {"check_same_thread": False} if is_sqlite else {}
-        _ENGINE = create_engine(
-            settings.db_url,
-            connect_args=connect_args,
-            pool_pre_ping=True,
-        )
+        _ENGINE = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
 
         if is_sqlite:
             _set_sqlite_pragma(_ENGINE)
