@@ -10,7 +10,7 @@ Self-hosted. Sub-millisecond search. GraphRAG built-in. No cloud bill.
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![Dashboard](https://img.shields.io/badge/dashboard-vector--db--web-6366f1)](https://github.com/lachu97/vector-db-web)
 
-[**Dashboard UI**](https://github.com/lachu97/vector-db-web) · [**API Docs**](http://localhost:8000/docs) · [**Benchmarks**](#performance)
+[**Dashboard UI**](https://github.com/lachu97/vector-db-web) · [**API Docs**](http://localhost:8000/docs](https://vector-db-web.vercel.app/docs)) · [**Benchmarks**](#performance)
 
 </div>
 
