@@ -36,7 +36,7 @@ VectorDB is the **retrieval layer** for your LLM stack. Upload documents, store 
 ```bash
 docker run -p 8000:8000 \
   -e OPENAI_API_KEY=sk-... \
-  ghcr.io/lachu97/vector-db:latest
+  lachu97/vector-db:latest
 ```
 
 ```bash
@@ -279,14 +279,14 @@ OTEL_ENDPOINT=http://localhost:4318
 docker run -p 8000:8000 \
   -v $(pwd)/data:/app/data \
   -e OPENAI_API_KEY=sk-... \
-  ghcr.io/lachu97/vector-db:latest
+  lachu97/vector-db:latest
 
 # PostgreSQL
 docker run -p 8000:8000 \
   -e STORAGE_BACKEND=postgres \
   -e DATABASE_URL=postgresql://user:pass@host/vectordb \
   -e OPENAI_API_KEY=sk-... \
-  ghcr.io/lachu97/vector-db:latest
+  lachu97/vector-db:latest
 ```
 
 ### Docker Compose
