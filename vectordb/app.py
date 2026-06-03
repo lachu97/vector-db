@@ -108,8 +108,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("observability_failed", error=str(e))
 
-    # 🔥 FIX: backend runs in separate thread
-    threading.Thread(target=start_backend_thread, daemon=True).start()
+    # Backend startup — await directly so async engine stays on the same event loop
+    try:
+        await app.state.backend.startup()
+        logger.info("backend_started")
+    except Exception as e:
+        logger.warning("backend_start_failed", error=str(e))
 
     # embeddings
     try:
