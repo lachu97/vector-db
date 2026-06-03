@@ -48,7 +48,7 @@ def upgrade() -> None:
             sa.Column("meta", sa.JSON(), nullable=True),
             sa.Column("content", sa.Text(), nullable=True),
             sa.PrimaryKeyConstraint("id"),
-            sa.UniqueConstraint("collection_id", "external_id", name="uq_collection_external_id"),
+            sa.UniqueConstraint("collection_id", "external_id", name="uq_pg_collection_external_id"),
         )
 
     inspector = inspect(bind)

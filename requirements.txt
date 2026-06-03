@@ -21,6 +21,7 @@ opentelemetry-exporter-otlp-proto-http
 # Phase 5: Scale & Storage Backends
 aiosqlite
 asyncpg
+psycopg2-binary
 pgvector
 redis[hiredis]
 bcrypt

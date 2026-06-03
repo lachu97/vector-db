@@ -23,20 +23,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # batch_alter_table rebuilds the SQLite table from scratch, which lets us:
-    #   1. Drop the old unique index on name alone.
-    #   2. Re-add name as a plain (non-unique) index.
-    #   3. Add the new named composite unique constraint (user_id, name).
-    # Any pre-existing sqlite_autoindex_collections_* auto-index is also
-    # replaced during the table rebuild, so we end up with exactly the
-    # constraint set we want.
+    from sqlalchemy import inspect
+    bind = op.get_bind()
+    inspector = inspect(bind)
+
+    existing_uqs = [uq["name"] for uq in inspector.get_unique_constraints("collections")]
+    existing_idxs = [ix["name"] for ix in inspector.get_indexes("collections")]
+
     with op.batch_alter_table('collections', schema=None) as batch_op:
-        # Drop the old global unique index on name
-        batch_op.drop_index('ix_collections_name')
-        # Recreate name index as non-unique
+        if 'ix_collections_name' in existing_idxs:
+            batch_op.drop_index('ix_collections_name')
         batch_op.create_index('ix_collections_name', ['name'], unique=False)
-        # Add the per-user composite unique constraint
-        batch_op.create_unique_constraint('uq_user_collection', ['user_id', 'name'])
+        if 'uq_user_collection' not in existing_uqs:
+            batch_op.create_unique_constraint('uq_user_collection', ['user_id', 'name'])
 
 
 def downgrade() -> None:
