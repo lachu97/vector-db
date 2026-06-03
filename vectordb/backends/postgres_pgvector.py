@@ -113,8 +113,13 @@ class PostgresVectorBackend(VectorBackend):
         )
 
     async def startup(self) -> None:
+        # Step 1: enable pgvector extension (separate transaction — DDL on extensions
+        # cannot share a transaction with CREATE TABLE on some Postgres providers)
         async with self._engine.begin() as conn:
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+        # Step 2: create tables and indexes
+        async with self._engine.begin() as conn:
             await conn.run_sync(PgBase.metadata.create_all)
             await conn.execute(text(
                 "CREATE INDEX IF NOT EXISTS idx_pg_vectors_collection_id "
