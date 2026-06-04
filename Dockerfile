@@ -9,6 +9,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 # Install CPU-only PyTorch first — prevents sentence-transformers pulling GPU/AVX build
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# Build hnswlib from source — pre-built wheels use AVX2 which crashes under Rosetta/ARM
+RUN pip install --no-cache-dir --no-binary hnswlib hnswlib
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
