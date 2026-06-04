@@ -35,7 +35,7 @@ VectorDB is the **retrieval layer** for your LLM stack. Upload documents, store 
 
 ```bash
 # No API key needed — embeddings run locally
-docker run -p 8000:8000 lachu97/vector-db:latest
+docker run -p 8000:8000 lakshminarasimhan17/vector-db:latest
 ```
 
 > Add `-e OPENAI_API_KEY=sk-...` only if you want `/v1/ask` (LLM answer generation) or GraphRAG. Core search, embeddings, and RAG retrieval work fully offline.
@@ -279,18 +279,18 @@ OTEL_ENDPOINT=http://localhost:4318
 # SQLite (zero-config, no API key needed)
 docker run -p 8000:8000 \
   -v $(pwd)/data:/app/data \
-  lachu97/vector-db:latest
+  lakshminarasimhan17/vector-db:latest
 
 # PostgreSQL
 docker run -p 8000:8000 \
   -e STORAGE_BACKEND=postgres \
   -e DATABASE_URL=postgresql://user:pass@host/vectordb \
-  lachu97/vector-db:latest
+  lakshminarasimhan17/vector-db:latest
 
 # With LLM answer generation (/v1/ask + GraphRAG)
 docker run -p 8000:8000 \
   -e OPENAI_API_KEY=sk-... \
-  lachu97/vector-db:latest
+  lakshminarasimhan17/vector-db:latest
 ```
 
 ### Docker Compose
