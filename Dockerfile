@@ -7,9 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# Build hnswlib from source — pre-built wheels use AVX2 which crashes under Rosetta/ARM
+# Pin numpy<2 — v2 uses ARM SVE / AVX-512 which crashes in Docker on Apple Silicon
+RUN pip install --no-cache-dir "numpy<2.0"
+# CPU-only torch — no AVX-512, works under Rosetta
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# Build hnswlib from source — pre-built wheel uses AVX2 which crashes under Rosetta
 RUN pip install --no-cache-dir --no-binary hnswlib hnswlib
-# Install remaining deps (torch pulls correct CPU-only wheel per arch automatically)
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
@@ -20,9 +23,7 @@ USER appuser
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
-    WORKERS=2 \
-    OPENBLAS_CORETYPE=ARMV8 \
-    OMP_NUM_THREADS=1
+    WORKERS=2
 
 EXPOSE ${PORT}
 
