@@ -56,7 +56,7 @@ class _PgVector(PgBase):
     user_id = Column(Integer, nullable=True, index=True)
 
     external_id = Column(String, nullable=False)
-    embedding = Column(PgVector(1536), nullable=False)
+    embedding = Column(PgVector(), nullable=False)  # dimensionless: per-collection dim enforced in upsert
     meta = Column(JSON, nullable=True)
     content = Column(Text, nullable=True)
 
@@ -816,6 +816,7 @@ class PostgresVectorBackend(VectorBackend):
             "id": col.id, "name": col.name, "dim": col.dim,
             "distance_metric": col.distance_metric, "description": col.description,
             "user_id": col.user_id,
+            "created_at": str(col.created_at) if col.created_at else None,
         }
 
     def _cached_to_ns(self, data: Dict[str, Any]):

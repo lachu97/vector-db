@@ -7,8 +7,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
-# Install CPU-only PyTorch first — prevents sentence-transformers pulling GPU/AVX build
+# Pin numpy<2 — v2 uses ARM SVE / AVX-512 which crashes in Docker on Apple Silicon
+RUN pip install --no-cache-dir "numpy<2.0"
+# CPU-only torch — no AVX-512, works under Rosetta
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# Build hnswlib from source — pre-built wheel uses AVX2 which crashes under Rosetta
+RUN pip install --no-cache-dir --no-binary hnswlib hnswlib
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
