@@ -17,13 +17,22 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd -m appuser
+# Pre-download sentence-transformers model as root into a fixed path.
+# Avoids runtime download inside gunicorn timeout + ensures appuser can read it.
+ENV SENTENCE_TRANSFORMERS_HOME=/app/.st_cache
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+
+RUN useradd -m appuser && chown -R appuser:appuser /app/.st_cache
 USER appuser
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8000 \
-    WORKERS=2
+    WORKERS=2 \
+    SENTENCE_TRANSFORMERS_HOME=/app/.st_cache \
+    OPENBLAS_CORETYPE=HASWELL \
+    OPENBLAS_NUM_THREADS=1 \
+    NPY_DISABLE_CPU_FEATURES="AVX512F AVX512CD AVX512_SKX AVX512_CLX AVX512_CNL AVX512_ICL"
 
 EXPOSE ${PORT}
 
