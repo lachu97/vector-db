@@ -77,6 +77,29 @@ class SentenceTransformerProvider(EmbeddingProvider):
         return self._dim
 
 
+class OpenAIEmbeddingProvider(EmbeddingProvider):
+    """OpenAI embeddings via the openai SDK. text-embedding-3-small = 1536-dim."""
+
+    def __init__(self, model_name: str = "text-embedding-3-small"):
+        import openai
+        self._client = openai.OpenAI()
+        self._model = model_name
+        # Probe dimension once at init
+        probe = self._client.embeddings.create(input=["probe"], model=self._model)
+        self._dim = len(probe.data[0].embedding)
+
+    def embed_text(self, text: str) -> List[float]:
+        resp = self._client.embeddings.create(input=[text], model=self._model)
+        return resp.data[0].embedding
+
+    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+        resp = self._client.embeddings.create(input=texts, model=self._model)
+        return [d.embedding for d in resp.data]
+
+    def get_dimension(self) -> int:
+        return self._dim
+
+
 class DummyEmbeddingProvider(EmbeddingProvider):
     """Deterministic hash-based embeddings for testing. No model download."""
 
@@ -123,6 +146,8 @@ def initialize_provider() -> None:
     # Provider
     if settings.embedding_provider == "sentence-transformers":
         _provider = SentenceTransformerProvider(settings.embedding_model)
+    elif settings.embedding_provider == "openai":
+        _provider = OpenAIEmbeddingProvider(settings.embedding_model)
     elif settings.embedding_provider == "dummy":
         _provider = DummyEmbeddingProvider(settings.vector_dim)
     else:

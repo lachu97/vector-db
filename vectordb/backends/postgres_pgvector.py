@@ -80,6 +80,11 @@ _SCORE_FN = {
 }
 
 
+def _list_to_pg_vector(v) -> str:
+    """Convert a Python list (or pgvector object) to the string format asyncpg expects."""
+    return "[" + ",".join(map(str, v)) + "]"
+
+
 def _to_async_pg_url(db_url: str) -> str:
     """Convert postgresql:// -> postgresql+asyncpg://"""
     for prefix in ("postgresql://", "postgres://"):
@@ -448,7 +453,7 @@ class PostgresVectorBackend(VectorBackend):
                         stmt = stmt.where(_PgVector.meta[key].astext == str(val))
 
             t_db = time.perf_counter()
-            result = await session.execute(stmt, {"vec": vec_np.tolist()})
+            result = await session.execute(stmt, {"vec": _list_to_pg_vector(vec_np.tolist())})
             rows = result.fetchall()
             db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
 
@@ -488,7 +493,7 @@ class PostgresVectorBackend(VectorBackend):
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
                 .limit(k)
             )
-            result = await session.execute(stmt, {"vec": vec})
+            result = await session.execute(stmt, {"vec": _list_to_pg_vector(vec)})
             rows = result.fetchall()
 
         return [
@@ -585,7 +590,7 @@ class PostgresVectorBackend(VectorBackend):
                     else:
                         vec_stmt = vec_stmt.where(_PgVector.meta[key].astext == str(val))
 
-            vr = await session.execute(vec_stmt, {"vec": vec_np.tolist()})
+            vr = await session.execute(vec_stmt, {"vec": _list_to_pg_vector(vec_np.tolist())})
             vector_results = {
                 r.external_id: {"score": score_fn(r._dist), "metadata": r.meta}
                 for r in vr.fetchall()
