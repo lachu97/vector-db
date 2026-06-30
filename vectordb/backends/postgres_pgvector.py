@@ -469,7 +469,7 @@ class PostgresVectorBackend(VectorBackend):
             await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             stmt = (
-                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS dist"))
+                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector)").label("dist"))
                 .where(_PgVector.collection_id == col.id)
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
                 .limit(k + offset)
@@ -516,7 +516,7 @@ class PostgresVectorBackend(VectorBackend):
 
             vec = row.embedding
             stmt = (
-                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS dist"))
+                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector)").label("dist"))
                 .where(_PgVector.collection_id == col.id)
                 .where(_PgVector.external_id != external_id)
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
@@ -607,7 +607,7 @@ class PostgresVectorBackend(VectorBackend):
             await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             vec_stmt = (
-                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS dist"))
+                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector)").label("dist"))
                 .where(_PgVector.collection_id == col.id)
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
                 .limit((k + offset) * 3)
