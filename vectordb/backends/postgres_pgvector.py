@@ -483,14 +483,14 @@ class PostgresVectorBackend(VectorBackend):
 
             t_db = time.perf_counter()
             result = await session.execute(stmt, {"vec": _list_to_pg_vector(vec_np.tolist())})
-            rows = result.fetchall()
+            rows = result.mappings().fetchall()
             db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
 
         total_ms = round((time.perf_counter() - t_total) * 1000, 2)
         logger.debug("pg_search", collection=collection_name,
                      col_resolve_ms=col_resolve_ms, db_op_ms=db_op_ms, total_ms=total_ms)
         return [
-            {"external_id": r.external_id, "score": score_fn(r.dist), "metadata": r.meta}
+            {"external_id": r["external_id"], "score": score_fn(r["dist"]), "metadata": r["meta"]}
             for r in rows[offset: offset + k]
         ]
 
@@ -523,10 +523,10 @@ class PostgresVectorBackend(VectorBackend):
                 .limit(k)
             )
             result = await session.execute(stmt, {"vec": _list_to_pg_vector(vec)})
-            rows = result.fetchall()
+            rows = result.mappings().fetchall()
 
         return [
-            {"external_id": r.external_id, "score": score_fn(r.dist), "metadata": r.meta}
+            {"external_id": r["external_id"], "score": score_fn(r["dist"]), "metadata": r["meta"]}
             for r in rows
         ]
 
@@ -621,8 +621,8 @@ class PostgresVectorBackend(VectorBackend):
 
             vr = await session.execute(vec_stmt, {"vec": _list_to_pg_vector(vec_np.tolist())})
             vector_results = {
-                r.external_id: {"score": score_fn(r.dist), "metadata": r.meta}
-                for r in vr.fetchall()
+                r["external_id"]: {"score": score_fn(r["dist"]), "metadata": r["meta"]}
+                for r in vr.mappings().fetchall()
             }
 
             text_results: Dict[str, Any] = {}
