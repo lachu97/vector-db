@@ -138,6 +138,24 @@ class PostgresVectorBackend(VectorBackend):
                 "CREATE INDEX IF NOT EXISTS idx_pg_vectors_collection_user "
                 "ON pg_vectors(collection_id, user_id)"
             ))
+
+        # Step 3: ensure embedding column is dimensionless vector.
+        # If a prior deploy created it as vector(N), alter it — create_all never
+        # modifies existing columns, so this is a one-time self-healing migration.
+        async with self._engine.begin() as conn:
+            row = await conn.execute(text(
+                "SELECT atttypmod FROM pg_attribute "
+                "WHERE attrelid = 'pg_vectors'::regclass AND attname = 'embedding'"
+            ))
+            typmod = row.scalar_one_or_none()
+            if typmod is not None and typmod > 0:
+                logger.info("pg_vectors_embedding_has_dim_constraint", typmod=typmod)
+                await conn.execute(text(
+                    "ALTER TABLE pg_vectors "
+                    "ALTER COLUMN embedding TYPE vector USING embedding::vector"
+                ))
+                logger.info("pg_vectors_embedding_altered_to_dimensionless")
+
         logger.info("postgres_pgvector_backend_started")
 
     async def shutdown(self) -> None:
