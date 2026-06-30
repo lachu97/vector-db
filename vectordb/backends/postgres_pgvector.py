@@ -15,7 +15,7 @@ import structlog
 from pgvector.sqlalchemy import Vector as PgVector
 from sqlalchemy import (
     Column, DateTime, Integer, JSON, String, Text,
-    UniqueConstraint, func, select, text,
+    UniqueConstraint, func, literal_column, select, text,
 )
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
@@ -469,7 +469,7 @@ class PostgresVectorBackend(VectorBackend):
             await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             stmt = (
-                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector)").label("dist"))
+                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS dist"))
                 .where(_PgVector.collection_id == col.id)
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
                 .limit(k + offset)
@@ -483,14 +483,14 @@ class PostgresVectorBackend(VectorBackend):
 
             t_db = time.perf_counter()
             result = await session.execute(stmt, {"vec": _list_to_pg_vector(vec_np.tolist())})
-            rows = result.mappings().fetchall()
+            rows = result.fetchall()
             db_op_ms = round((time.perf_counter() - t_db) * 1000, 2)
 
         total_ms = round((time.perf_counter() - t_total) * 1000, 2)
         logger.debug("pg_search", collection=collection_name,
                      col_resolve_ms=col_resolve_ms, db_op_ms=db_op_ms, total_ms=total_ms)
         return [
-            {"external_id": r["external_id"], "score": score_fn(r["dist"]), "metadata": r["meta"]}
+            {"external_id": r[0], "score": score_fn(r[2]), "metadata": r[1]}
             for r in rows[offset: offset + k]
         ]
 
@@ -516,17 +516,17 @@ class PostgresVectorBackend(VectorBackend):
 
             vec = row.embedding
             stmt = (
-                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector)").label("dist"))
+                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS dist"))
                 .where(_PgVector.collection_id == col.id)
                 .where(_PgVector.external_id != external_id)
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
                 .limit(k)
             )
             result = await session.execute(stmt, {"vec": _list_to_pg_vector(vec)})
-            rows = result.mappings().fetchall()
+            rows = result.fetchall()
 
         return [
-            {"external_id": r["external_id"], "score": score_fn(r["dist"]), "metadata": r["meta"]}
+            {"external_id": r[0], "score": score_fn(r[2]), "metadata": r[1]}
             for r in rows
         ]
 
@@ -607,7 +607,7 @@ class PostgresVectorBackend(VectorBackend):
             await session.execute(text(f"SET LOCAL hnsw.ef_search = {self._settings.pg_ef_search}"))
 
             vec_stmt = (
-                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector)").label("dist"))
+                select(_PgVector.external_id, _PgVector.meta, text(f"embedding {op} CAST(:vec AS vector) AS dist"))
                 .where(_PgVector.collection_id == col.id)
                 .order_by(text(f"embedding {op} CAST(:vec AS vector)"))
                 .limit((k + offset) * 3)
@@ -621,8 +621,8 @@ class PostgresVectorBackend(VectorBackend):
 
             vr = await session.execute(vec_stmt, {"vec": _list_to_pg_vector(vec_np.tolist())})
             vector_results = {
-                r["external_id"]: {"score": score_fn(r["dist"]), "metadata": r["meta"]}
-                for r in vr.mappings().fetchall()
+                r[0]: {"score": score_fn(r[2]), "metadata": r[1]}
+                for r in vr.fetchall()
             }
 
             text_results: Dict[str, Any] = {}
