@@ -142,7 +142,18 @@ class PostgresVectorBackend(VectorBackend):
         # Step 3: ensure embedding column is dimensionless vector.
         # If a prior deploy created it as vector(N), alter it — create_all never
         # modifies existing columns, so this is a one-time self-healing migration.
+        # Must also drop any vector indexes on embedding first — a dimensioned HNSW
+        # index enforces dim consistency even after the column type is widened.
         async with self._engine.begin() as conn:
+            # Drop any pgvector indexes on embedding (HNSW/IVFFlat enforce dim at insert)
+            idx_result = await conn.execute(text(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE tablename = 'pg_vectors' AND indexdef ILIKE '%embedding%'"
+            ))
+            for (idx_name,) in idx_result.fetchall():
+                logger.info("pg_vectors_dropping_embedding_index", index=idx_name)
+                await conn.execute(text(f"DROP INDEX IF EXISTS {idx_name}"))
+
             row = await conn.execute(text(
                 "SELECT atttypmod FROM pg_attribute "
                 "WHERE attrelid = 'pg_vectors'::regclass AND attname = 'embedding'"
